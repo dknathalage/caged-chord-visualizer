@@ -3,30 +3,49 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CAGED Complete — All Shapes</title>
+<title>CAGED Chord Visualizer — Interactive Guitar Chord Shapes & Fretboard Tool</title>
+<meta name="description" content="Free interactive CAGED system visualizer for guitar. Explore all 5 chord shapes (C, A, G, E, D) across the fretboard for any key and chord type — major, minor, 7th, sus, dim, aug, and more.">
+<meta name="keywords" content="CAGED system, guitar chords, chord shapes, fretboard visualizer, guitar chord chart, CAGED guitar, chord voicings, guitar practice tool, music theory">
+<meta name="author" content="dknathalage">
+<meta name="theme-color" content="#0e0e1a">
+<link rel="canonical" href="https://dknathalage.github.io/caged-chord-visualizer/">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="CAGED Chord Visualizer — Interactive Guitar Fretboard Tool">
+<meta property="og:description" content="Explore all 5 CAGED chord shapes across the fretboard for any key and chord type. Free interactive guitar tool for learning the CAGED system.">
+<meta property="og:url" content="https://dknathalage.github.io/caged-chord-visualizer/">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="CAGED Chord Visualizer — Interactive Guitar Fretboard Tool">
+<meta name="twitter:description" content="Explore all 5 CAGED chord shapes across the fretboard for any key and chord type. Free interactive guitar tool.">
+
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="caged.css">
 </head>
 <body>
 <div class="ctr">
-<div class="hdr">
+<header class="hdr">
   <h1 id="mainTitle"><span id="titleLine1"></span><br><span id="titleLine2"></span></h1>
-  <div class="pill-group">
-    <div class="row" id="kPills"></div>
-    <div class="row" id="tPills"></div>
-  </div>
-</div>
-<div class="shapes-grid" id="grid"></div>
-<div class="ns">
-  <div class="nc" id="nC"></div>
-  <div class="leg">
-    <div class="li"><div class="ld" style="background:#4DA6FF"></div>E Shape</div>
-    <div class="li"><div class="ld" style="background:#FFB347"></div>A Shape</div>
-    <div class="li"><div class="ld" style="background:#B980F0"></div>D Shape</div>
-    <div class="li"><div class="ld" style="background:#FF6B6B"></div>C Shape</div>
-    <div class="li"><div class="ld" style="background:#4ECB71"></div>G Shape</div>
-  </div>
-</div>
+  <nav class="pill-group" aria-label="Chord selection">
+    <div class="row" id="kPills" role="group" aria-label="Root note"></div>
+    <div class="row" id="tPills" role="group" aria-label="Chord type"></div>
+  </nav>
+</header>
+<main>
+  <section class="shapes-grid" id="grid" aria-label="CAGED chord shapes"></section>
+  <section class="ns" aria-label="Full neck overview">
+    <div class="nc" id="nC"></div>
+    <div class="leg">
+      <div class="li"><div class="ld" style="background:#4DA6FF"></div>E Shape</div>
+      <div class="li"><div class="ld" style="background:#FFB347"></div>A Shape</div>
+      <div class="li"><div class="ld" style="background:#B980F0"></div>D Shape</div>
+      <div class="li"><div class="ld" style="background:#FF6B6B"></div>C Shape</div>
+      <div class="li"><div class="ld" style="background:#4ECB71"></div>G Shape</div>
+    </div>
+  </section>
+</main>
 </div>
 <script src="caged.js"></script>
 </body>
