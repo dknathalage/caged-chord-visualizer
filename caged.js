@@ -116,11 +116,14 @@ function renderDiagram(r, color) {
 
   let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
 
+  // Fretboard background
+  s += `<rect x="${FRET_L - 4}" y="${TOP}" width="${FRET_R - FRET_L + 8}" height="${NF * FH}" rx="3" fill="#1a1a2e"/>`;
+
   // Interval / muted markers above nut
   for (let i = 0; i < 6; i++) {
     const cx = FRET_L + i * SP;
     if (muted.includes(i)) {
-      s += `<text x="${cx}" y="${TOP - 12}" text-anchor="middle" dominant-baseline="central" fill="#666" font-size="14" font-weight="bold" font-family="JetBrains Mono">×</text>`;
+      s += `<text x="${cx}" y="${TOP - 12}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="14" font-weight="bold" font-family="JetBrains Mono">×</text>`;
     } else {
       const v = voices.find(v => v.str === i);
       if (v) s += `<text x="${cx}" y="${TOP - 12}" text-anchor="middle" dominant-baseline="central" fill="${color}" font-size="14" font-weight="bold" font-family="JetBrains Mono">${v.interval}</text>`;
@@ -131,20 +134,20 @@ function renderDiagram(r, color) {
   for (let i = 0; i <= NF; i++) {
     const y = TOP + i * FH;
     s += i === 0
-      ? `<rect x="${FRET_L - 2}" y="${y - 2}" width="${FRET_R - FRET_L + 4}" height="4" rx="1" fill="#555"/>`
-      : `<line x1="${FRET_L}" y1="${y}" x2="${FRET_R}" y2="${y}" stroke="#3a3a3a" stroke-width="1.2"/>`;
+      ? `<rect x="${FRET_L - 2}" y="${y - 2}" width="${FRET_R - FRET_L + 4}" height="4" rx="2" fill="#ddd"/>`
+      : `<line x1="${FRET_L}" y1="${y}" x2="${FRET_R}" y2="${y}" stroke="#333" stroke-width="1.2"/>`;
   }
 
   // Strings
   for (let i = 0; i < 6; i++) {
     const x = FRET_L + i * SP;
-    s += `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP + NF * FH}" stroke="#666" stroke-width="${2.2 - i * .25}"/>`;
-    s += `<text x="${x}" y="${TOP + NF * FH + 12}" text-anchor="middle" dominant-baseline="central" fill="#555" font-size="16" font-family="JetBrains Mono">${CFG.stringNames[i]}</text>`;
+    s += `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP + NF * FH}" stroke="#444" stroke-width="${2.2 - i * .25}"/>`;
+    s += `<text x="${x}" y="${TOP + NF * FH + 12}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="16" font-family="JetBrains Mono">${CFG.stringNames[i]}</text>`;
   }
 
   // Fret numbers
   for (let i = 0; i < NF; i++)
-    s += `<text x="${FRET_L - 16}" y="${TOP + i * FH + FH / 2}" text-anchor="middle" dominant-baseline="central" fill="#555" font-size="16" font-family="JetBrains Mono">${bfret + i}</text>`;
+    s += `<text x="${FRET_L - 16}" y="${TOP + i * FH + FH / 2}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="16" font-family="JetBrains Mono">${bfret + i}</text>`;
 
   // Barre bar
   if (barreStrs.length >= 2) {
