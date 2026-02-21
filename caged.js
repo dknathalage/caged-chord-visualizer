@@ -33,7 +33,10 @@ const CFG = {
   ]
 };
 
-let curType = 'maj', curRoot = 7, curShape = null;
+let curType = 'maj', curRoot = 0, curShape = null;
+let curLayer = 0;
+let sortedShapeIds = [];
+let kbActive = false;
 
 function adaptShape(sh) {
   const rb = CFG.tuning[sh.rootStr[0]], bo = sh.barreOffset || 0;
@@ -113,11 +116,14 @@ function renderDiagram(r, color) {
 
   let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
 
-  // Muted string markers above nut
+  // Interval / muted markers above nut
   for (let i = 0; i < 6; i++) {
+    const cx = FRET_L + i * SP;
     if (muted.includes(i)) {
-      const cx = FRET_L + i * SP;
-      s += `<text x="${cx}" y="${TOP - 12}" text-anchor="middle" dominant-baseline="central" fill="#666" font-size="16" font-weight="bold" font-family="JetBrains Mono">\u2715</text>`;
+      s += `<text x="${cx}" y="${TOP - 12}" text-anchor="middle" dominant-baseline="central" fill="#666" font-size="14" font-weight="bold" font-family="JetBrains Mono">×</text>`;
+    } else {
+      const v = voices.find(v => v.str === i);
+      if (v) s += `<text x="${cx}" y="${TOP - 12}" text-anchor="middle" dominant-baseline="central" fill="${color}" font-size="14" font-weight="bold" font-family="JetBrains Mono">${v.interval}</text>`;
     }
   }
 
@@ -151,13 +157,14 @@ function renderDiagram(r, color) {
   voices.forEach(v => {
     const x = FRET_L + v.str * SP, y = TOP + v.fo * FH + FH / 2;
     const isR = v.isRoot && rootStrs.includes(v.str);
+    const fs = v.note.length > 1 ? 11 : 16;
 
     if (isR) {
       s += `<circle cx="${x}" cy="${y}" r="${DR + 1}" fill="${color}"/>`;
-      s += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="16" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
+      s += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs}" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
     } else {
       s += `<circle cx="${x}" cy="${y}" r="${DR}" fill="${color}"/>`;
-      s += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="16" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
+      s += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs}" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
     }
   });
 
@@ -207,12 +214,13 @@ function renderNeck(ri, ct) {
       const af = r.bf + v.fo;
       if (af < 1 || af > NF) return;
       const cx = NL + (af - .5) * FW, cy = SY(v.str);
+      const nfs = v.note.length > 1 ? 7 : 9;
       if (v.isRoot) {
         s += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${col}"/>`;
-        s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="9" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
+        s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${nfs}" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
       } else {
         s += `<circle cx="${cx}" cy="${cy}" r="6" fill="${col}"/>`;
-        s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="9" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
+        s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${nfs}" font-weight="bold" font-family="JetBrains Mono">${v.note}</text>`;
       }
     });
   });
@@ -245,17 +253,13 @@ function U() {
   const adapted = CFG.shapes.map(adaptShape);
   let gridHTML = '';
   const sortedShapes = [...adapted].sort((a, b) => getBf(a, ri) - getBf(b, ri));
+  sortedShapeIds = sortedShapes.map(s => s.id);
   sortedShapes.forEach(sh => {
     const col = CFG.shapeColors[sh.id];
     const r = resolve(sh, ri, ct.iv);
-    const intervalStr = [0,1,2,3,4,5].map(si => {
-      if (r.muted.includes(si)) return 'x';
-      const v = r.voices.find(v => v.str === si);
-      return v ? v.interval : 'x';
-    }).join('-');
     const sel = curShape === sh.id;
     gridHTML += `<div class="shape-card${sel ? ' sel' : ''}" style="${sel ? '--sel-color:' + col : ''}" onclick="pickShape('${sh.id}')">
-      <div class="sh-title" style="color:${col}">${sh.label} (${intervalStr})</div>
+      <div class="sh-title" style="color:${col}">${sh.label}</div>
       <div class="sh-sub">Fret ${r.bf} \u00b7 ${cn}</div>
       <div class="fb">${renderDiagram(r, col)}</div>
     </div>`;
@@ -267,6 +271,42 @@ function U() {
   document.getElementById('titleLine1').textContent = `${rn} ${ct.name}`;
   document.getElementById('titleLine2').textContent = shLabel;
   document.getElementById('nC').innerHTML = renderNeck(ri, ct);
+
+  // Focus indicator
+  const focusTargets = ['kPills', 'tPills', 'grid'];
+  focusTargets.forEach((id, i) => {
+    document.getElementById(id).classList.toggle('focus-row', kbActive && i === curLayer);
+  });
 }
+
+document.addEventListener('mousemove', () => {
+  if (!kbActive) return;
+  kbActive = false;
+  ['kPills','tPills','grid'].forEach(id => document.getElementById(id).classList.remove('focus-row'));
+}, {passive: true});
+
+document.addEventListener('keydown', e => {
+  const key = e.key;
+  if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(key)) return;
+  e.preventDefault();
+  kbActive = true;
+  const delta = (key === 'ArrowRight' || key === 'ArrowDown') ? 1 : -1;
+
+  if (key === 'ArrowDown') { curLayer = Math.min(curLayer + 1, 2); }
+  else if (key === 'ArrowUp') { curLayer = Math.max(curLayer - 1, 0); }
+  else if (curLayer === 0) {
+    curRoot = (curRoot + delta + 12) % 12;
+  } else if (curLayer === 1) {
+    const idx = CFG.chordTypes.findIndex(c => c.id === curType);
+    const ni = (idx + delta + CFG.chordTypes.length) % CFG.chordTypes.length;
+    curType = CFG.chordTypes[ni].id;
+  } else if (curLayer === 2) {
+    const cycle = [null, ...sortedShapeIds];
+    const ci = cycle.indexOf(curShape);
+    const ni = (ci + delta + cycle.length) % cycle.length;
+    curShape = cycle[ni];
+  }
+  U();
+});
 
 U();
