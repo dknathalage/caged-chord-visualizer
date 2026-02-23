@@ -13,7 +13,7 @@ const STD_SHAPES = [
 const STD_COLORS = {e:'#4DA6FF',a:'#FFB347',d:'#B980F0',c:'#FF6B6B',g:'#4ECB71'};
 
 const CFG = {
-  notes: ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'],
+  notes: NOTES,
   noteDisplay: ['C','C#/Db','D','D#/Eb','E','F','F#/Gb','G','G#/Ab','A','A#/Bb','B'],
   tuning: [4,9,2,7,11,4],
   stringNames: ['E','A','D','G','B','e'],
@@ -135,8 +135,8 @@ function adaptShape(sh) {
 }
 
 function getBf(sh, ri) {
-  const f = ((ri - sh.rootBase) + 12) % 12 || 12;
-  if (sh.barreOffset) { let r = f + sh.barreOffset; return r <= 0 ? r + 12 : r; }
+  const f = ((ri - sh.rootBase) + 12) % 12;
+  if (sh.barreOffset) { let r = f + sh.barreOffset; return r < 0 ? r + 12 : r; }
   return f;
 }
 
@@ -236,20 +236,23 @@ function renderDiagram(r, color) {
     s += `<text x="${x}" y="${TOP + NF * FH + 12}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="16" font-family="JetBrains Mono">${CFG.stringNames[i]}</text>`;
   }
 
-  // Fret numbers
+  // Fret numbers (open position starts at 1)
+  const isOpen = bfret === 0;
   for (let i = 0; i < NF; i++)
-    s += `<text x="${FRET_L - 16}" y="${TOP + i * FH + FH / 2}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="16" font-family="JetBrains Mono">${bfret + i}</text>`;
+    s += `<text x="${FRET_L - 16}" y="${TOP + i * FH + FH / 2}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="16" font-family="JetBrains Mono">${(isOpen ? 1 : bfret) + i}</text>`;
 
-  // Barre bar
-  if (barreStrs.length >= 2) {
+  // Barre bar (skip for open position)
+  if (barreStrs.length >= 2 && !isOpen) {
     const mn = Math.min(...barreStrs), mx = Math.max(...barreStrs);
     const x1 = FRET_L + mn * SP, x2 = FRET_L + mx * SP, by = TOP + FH / 2;
     s += `<rect x="${x1 - 4}" y="${by - 5}" width="${x2 - x1 + 8}" height="10" rx="5" fill="${color}" opacity="0.75"/>`;
   }
 
-  // Dots on fretboard
+  // Dots on fretboard (skip open strings)
   voices.forEach(v => {
-    const x = FRET_L + v.str * SP, y = TOP + v.fo * FH + FH / 2;
+    if (isOpen && v.fo === 0) return;
+    const adjFo = isOpen ? v.fo - 1 : v.fo;
+    const x = FRET_L + v.str * SP, y = TOP + adjFo * FH + FH / 2;
     const isR = v.isRoot && rootStrs.includes(v.str);
     const fs = v.note.length > 1 ? 11 : 16;
 
@@ -289,7 +292,7 @@ function renderNeck(ri, ct) {
     s += `<rect x="${x}" y="${NT}" width="${zw}" height="${NH}" fill="${sh.color}" opacity=".18" rx="3"/>`;
     s += `<rect x="${x}" y="${NT}" width="${zw}" height="3" fill="${sh.color}" opacity=".8" rx="1"/>`;
     s += `<text x="${x + zw / 2}" y="${NT - 4}" text-anchor="middle" fill="${sh.color}" font-size="9" font-weight="bold" font-family="Outfit">${sh.label}</text>`;
-    s += `<text x="${x + zw / 2}" y="${NT + NH / 2 + 3}" text-anchor="middle" fill="${sh.color}" font-size="9" font-weight="bold" font-family="JetBrains Mono" opacity=".5">fr${sh.bf}</text>`;
+    s += `<text x="${x + zw / 2}" y="${NT + NH / 2 + 3}" text-anchor="middle" fill="${sh.color}" font-size="9" font-weight="bold" font-family="JetBrains Mono" opacity=".5">${sh.bf === 0 ? 'open' : 'fr' + sh.bf}</text>`;
   });
   // Draw note dots + barre for selected (or all) shapes
   adapted.forEach(shDef => {
@@ -306,8 +309,8 @@ function renderNeck(ri, ct) {
     }
     r.voices.forEach(v => {
       const af = r.bf + v.fo;
-      if (af < 1 || af > NF) return;
-      const cx = NL + (af - .5) * FW, cy = SY(v.str);
+      if (af < 0 || af > NF) return;
+      const cx = af === 0 ? NL + 2 : NL + (af - .5) * FW, cy = SY(v.str);
       const nfs = v.note.length > 1 ? 7 : 9;
       if (v.isRoot) {
         s += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${col}"/>`;
@@ -364,7 +367,7 @@ function U() {
     const sel = curShape === sh.id;
     gridHTML += `<div class="shape-card${sel ? ' sel' : ''}" style="${sel ? '--sel-color:' + col : ''}" onclick="pickShape('${sh.id}')">
       <div class="sh-title" style="color:${col}">${sh.label}</div>
-      <div class="sh-sub">Fret ${r.bf} \u00b7 ${cn}</div>
+      <div class="sh-sub">${r.bf === 0 ? 'Open' : 'Fret ' + r.bf} \u00b7 ${cn}</div>
       <div class="fb">${renderDiagram(r, col)}</div>
     </div>`;
   });

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAGED Chord Visualizer — Interactive Guitar Chord Shapes & Fretboard Tool</title>
+<meta name="description" content="Free interactive CAGED system visualizer for guitar. Explore chord shapes across the fretboard for any key, chord type, and tuning — standard, drop D, open G, open D, DADGAD, and more.">
+<meta name="keywords" content="CAGED system, guitar chords, chord shapes, fretboard visualizer, guitar chord chart, CAGED guitar, chord voicings, guitar practice tool, music theory">
+<meta name="author" content="dknathalage">
+<meta name="theme-color" content="#0e0e1a">
+<link rel="canonical" href="https://dknathalage.github.io/caged-chord-visualizer/">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="CAGED Chord Visualizer — Interactive Guitar Fretboard Tool">
+<meta property="og:description" content="Explore all 5 CAGED chord shapes across the fretboard for any key and chord type. Free interactive guitar tool for learning the CAGED system.">
+<meta property="og:url" content="https://dknathalage.github.io/caged-chord-visualizer/">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="CAGED Chord Visualizer — Interactive Guitar Fretboard Tool">
+<meta name="twitter:description" content="Explore all 5 CAGED chord shapes across the fretboard for any key and chord type. Free interactive guitar tool.">
+
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/shared.css">
+<link rel="stylesheet" href="css/caged.css">
+</head>
+<body>
+<div class="ctr">
+<header class="hdr">
+  <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+    <h1 id="mainTitle"><span id="titleLine1"></span><br><span id="titleLine2"></span></h1>
+    <a href="index.html" class="pill" style="font-size:13px;text-decoration:none">Home</a>
+    <a href="note-trainer.html" class="pill" style="font-size:13px;text-decoration:none">Note Trainer</a>
+    <a href="tuner.html" class="pill" style="font-size:13px;text-decoration:none">Tuner</a>
+  </div>
+  <nav class="pill-group" aria-label="Chord selection">
+    <div class="row">
+      <select id="tunSel" class="tun-dd" aria-label="Tuning"></select>
+      <div id="kPills" role="group" aria-label="Root note"></div>
+    </div>
+    <div class="row" id="tPills" role="group" aria-label="Chord type"></div>
+  </nav>
+</header>
+<main>
+  <section class="shapes-grid" id="grid" aria-label="Chord shapes"></section>
+  <section class="ns" aria-label="Full neck overview">
+    <div class="nc" id="nC"></div>
+    <div class="leg" id="leg"></div>
+  </section>
+</main>
+</div>
+<script src="js/shared.js"></script>
+<script src="js/caged.js"></script>
+</body>
+</html>

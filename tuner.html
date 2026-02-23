@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guitar Tuner — Chromatic Tuner with Preset & Custom Tunings</title>
+<meta name="description" content="Free online guitar tuner with real-time pitch detection. Supports standard, drop D, open G, open D, DADGAD tunings, and custom tuning presets.">
+<meta name="theme-color" content="#0e0e1a">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/shared.css">
+<link rel="stylesheet" href="css/tuner.css">
+</head>
+<body>
+<div class="tu-wrap">
+  <header class="tu-hdr">
+    <h1>Guitar Tuner</h1>
+    <nav class="tu-nav">
+      <a href="index.html" class="pill" style="font-size:13px;text-decoration:none">Home</a>
+      <a href="caged.html" class="pill" style="font-size:13px;text-decoration:none">CAGED</a>
+      <a href="note-trainer.html" class="pill" style="font-size:13px;text-decoration:none">Notes</a>
+    </nav>
+  </header>
+  <div class="tu-tun-row">
+    <select class="tu-tun-sel" id="tuTunSel" aria-label="Tuning"></select>
+    <button class="tu-btn tu-small" id="tuCustomBtn">+ Custom</button>
+  </div>
+  <div class="tu-custom" id="tuCustom">
+    <div class="tu-custom-title">Custom Tuning</div>
+    <div class="tu-custom-row" id="tuCustomRow"></div>
+    <div class="tu-custom-btns">
+      <button class="tu-btn tu-small" id="tuApply">Apply</button>
+      <button class="tu-btn tu-small" id="tuSave">Save</button>
+      <button class="tu-btn tu-small" id="tuCancelCustom">Cancel</button>
+    </div>
+    <div id="tuSavedList"></div>
+  </div>
+  <div class="tu-main">
+    <div class="tu-detect" id="tuDetect">
+      <div class="tu-detect-lbl">Detected</div>
+      <div class="tu-detect-note" id="tuNote">—</div>
+      <div class="tu-cents-wrap">
+        <span class="tu-cents-lbl" id="tuCentsLbl"></span>
+        <div class="tu-cents-bar">
+          <div class="tu-cents-tick"></div>
+          <div class="tu-cents-ind" id="tuCentsInd"></div>
+        </div>
+        <span class="tu-hz" id="tuHz"></span>
+      </div>
+    </div>
+    <div class="tu-strings" id="tuStrings"></div>
+    <div class="tu-msg" id="tuMsg">Press Start to tune</div>
+  </div>
+  <div class="tu-controls">
+    <button class="tu-btn tu-primary" id="tuStart">Start</button>
+    <button class="tu-btn tu-danger" id="tuStop" style="display:none">Stop</button>
+  </div>
+</div>
+<script src="js/shared.js"></script>
+<script src="js/tuner.js"></script>
+</body>
+</html>
