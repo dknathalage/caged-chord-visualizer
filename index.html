@@ -10,31 +10,136 @@
 <link rel="stylesheet" href="css/shared.css">
 <style>
 html,body{overflow:visible}
-.landing{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:2rem 1rem}
-.landing h1{font-size:clamp(1.8rem,5vw,2.8rem);font-weight:900;text-align:center;margin-bottom:2.5rem;letter-spacing:-1px;background:linear-gradient(135deg,var(--ac) 0%,#a78bfa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.5rem;width:100%;max-width:900px}
-.card{display:block;text-decoration:none;color:var(--tx);background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:2rem 1.8rem;transition:transform .15s,border-color .2s,box-shadow .2s}
-.card:hover{transform:translateY(-4px);border-color:var(--ac);box-shadow:0 8px 30px rgba(88,166,255,.12)}
-.card-title{font-size:1.3rem;font-weight:700;margin-bottom:.5rem}
-.card-desc{font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--mt);line-height:1.5}
+
+.landing{
+  display:flex;flex-direction:column;align-items:center;
+  min-height:100vh;padding:3rem 1rem 4rem;
+}
+.landing h1{
+  font-size:clamp(1.8rem,5vw,2.8rem);font-weight:900;text-align:center;
+  margin-bottom:.6rem;letter-spacing:-1px;
+  background:linear-gradient(135deg,var(--ac) 0%,#a78bfa 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.landing-sub{
+  font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--mt);
+  text-align:center;margin-bottom:3rem;letter-spacing:.5px;
+}
+
+/* sections */
+.section{width:100%;max-width:900px;margin-bottom:2.5rem}
+.section:last-child{margin-bottom:0}
+.section-hdr{
+  display:flex;align-items:center;gap:.8rem;
+  margin-bottom:1rem;padding:0 .2rem;
+}
+.section-label{
+  font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:2px;white-space:nowrap;
+  color:var(--mt);
+}
+.section-line{flex:1;height:1px;background:var(--bd)}
+
+/* level dot */
+.section-dot{
+  width:7px;height:7px;border-radius:50%;flex-shrink:0;
+}
+.section--tools .section-dot{background:var(--mt)}
+.section--beginner .section-dot{background:#4ECB71}
+
+/* cards grid */
+.cards{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:1.2rem;
+}
+.card{
+  display:block;text-decoration:none;color:var(--tx);
+  background:var(--sf);border:1px solid var(--bd);border-radius:12px;
+  padding:1.6rem 1.5rem;
+  transition:transform .15s,border-color .2s,box-shadow .2s;
+  position:relative;overflow:hidden;
+}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  opacity:0;transition:opacity .2s;
+}
+.card:hover{transform:translateY(-3px);box-shadow:0 8px 30px rgba(0,0,0,.3)}
+.card:hover::before{opacity:1}
+
+/* card accent colors per section */
+.section--tools .card:hover{border-color:var(--mt)}
+.section--tools .card::before{background:var(--mt)}
+.section--beginner .card:hover{border-color:#4ECB71;box-shadow:0 8px 30px rgba(78,203,113,.1)}
+.section--beginner .card::before{background:#4ECB71}
+
+.card-title{font-size:1.15rem;font-weight:700;margin-bottom:.4rem}
+.card-desc{
+  font-family:'JetBrains Mono',monospace;font-size:.8rem;
+  color:var(--mt);line-height:1.55;
+}
+
+/* entrance */
+.section{opacity:0;transform:translateY(16px);animation:sec-in .5s ease forwards}
+.section:nth-child(2){animation-delay:.05s}
+.section:nth-child(3){animation-delay:.1s}
+.section:nth-child(4){animation-delay:.15s}
+.section:nth-child(5){animation-delay:.2s}
+@keyframes sec-in{to{opacity:1;transform:none}}
+
+@media(max-width:600px){
+  .landing{padding:2rem .8rem 3rem}
+  .landing h1{margin-bottom:.4rem}
+  .landing-sub{margin-bottom:2rem}
+  .section{margin-bottom:2rem}
+  .cards{gap:1rem}
+  .card{padding:1.3rem 1.2rem}
+}
 </style>
 </head>
 <body>
 <div class="landing">
   <h1>Guitar Learning Tools</h1>
-  <div class="cards">
-    <a href="caged.html" class="card">
-      <div class="card-title">CAGED Chord Visualizer</div>
-      <div class="card-desc">Explore all 5 CAGED shapes across the fretboard for any key, chord type, and tuning.</div>
-    </a>
-    <a href="note-trainer.html" class="card">
-      <div class="card-title">Note Trainer</div>
-      <div class="card-desc">Practice finding notes on the fretboard with real-time pitch detection via your mic.</div>
-    </a>
-    <a href="tuner.html" class="card">
-      <div class="card-title">Guitar Tuner</div>
-      <div class="card-desc">Tune your guitar with real-time pitch detection. Supports preset and custom tunings.</div>
-    </a>
+  <div class="landing-sub">fretboard exercises &middot; theory tools &middot; pitch detection</div>
+
+  <div class="section section--tools">
+    <div class="section-hdr">
+      <div class="section-dot"></div>
+      <span class="section-label">Tools</span>
+      <div class="section-line"></div>
+    </div>
+    <div class="cards">
+      <a href="caged.html" class="card">
+        <div class="card-title">CAGED Chord Visualizer</div>
+        <div class="card-desc">Explore all 5 CAGED shapes across the fretboard for any key, chord type, and tuning.</div>
+      </a>
+      <a href="tuner.html" class="card">
+        <div class="card-title">Guitar Tuner</div>
+        <div class="card-desc">Tune your guitar with real-time pitch detection. Supports preset and custom tunings.</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section section--beginner">
+    <div class="section-hdr">
+      <div class="section-dot"></div>
+      <span class="section-label">Fretboard Exercises</span>
+      <div class="section-line"></div>
+    </div>
+    <div class="cards">
+      <a href="note-find.html" class="card">
+        <div class="card-title">Note Find</div>
+        <div class="card-desc">Practice finding notes on the fretboard with real-time pitch detection via your mic.</div>
+      </a>
+      <a href="string-traversal.html" class="card">
+        <div class="card-title">String Traversal</div>
+        <div class="card-desc">Play a given note across all 6 strings to build fretboard fluency.</div>
+      </a>
+      <a href="interval.html" class="card">
+        <div class="card-title">Interval Trainer</div>
+        <div class="card-desc">Identify and play intervals on the fretboard with pitch detection feedback.</div>
+      </a>
+    </div>
   </div>
 </div>
 </body>

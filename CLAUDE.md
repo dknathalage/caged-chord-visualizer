@@ -66,17 +66,22 @@ The CAGED Chord Visualizer and Note Trainer are pure vanilla web apps (HTML/CSS/
 ```
 index.html              # Landing page / navigation hub
 caged.html              # CAGED Chord Visualizer
-note-trainer.html       # Note Trainer
+note-find.html          # Note Find exercise
+string-traversal.html   # String Traversal exercise
+interval.html           # Interval Trainer exercise
 tuner.html              # Guitar Tuner
 css/
   shared.css            # :root vars, reset, body, .pill, .row, h1
   caged.css             # CAGED-specific styles
-  note-trainer.css      # Note Trainer styles (.nt-*)
+  note-trainer.css      # Shared trainer styles (.nt-*)
   tuner.css             # Tuner styles (.tu-*)
 js/
   shared.js             # Shared constants (NOTES, TUNINGS, A4) + pitch utils (YIN, freqToNote, rms)
+  trainer-core.js       # Shared trainer infrastructure (state, audio, scoring, detection loop)
+  note-find.js          # Note Find exercise logic
+  string-traversal.js   # String Traversal exercise logic
+  interval.js           # Interval Trainer exercise logic
   caged.js              # CAGED visualizer logic
-  note-trainer.js       # Note Trainer logic
   tuner.js              # Guitar Tuner logic
 docs/                   # Curriculum chapters
 ```

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Note Find — Guitar Fretboard Note Practice</title>
+<meta name="description" content="Practice finding notes on the guitar fretboard with real-time pitch detection via your microphone.">
+<meta name="theme-color" content="#0e0e1a">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/shared.css">
+<link rel="stylesheet" href="css/note-trainer.css">
+</head>
+<body>
+<div class="nt-wrap">
+  <header class="nt-hdr">
+    <h1>Note Find</h1>
+    <nav class="nt-nav">
+      <a href="index.html" class="pill" style="font-size:13px;text-decoration:none">Home</a>
+      <a href="string-traversal.html" class="pill" style="font-size:13px;text-decoration:none">Traversal</a>
+      <a href="interval.html" class="pill" style="font-size:13px;text-decoration:none">Interval</a>
+    </nav>
+  </header>
+  <div class="nt-stats" id="ntStats">
+    <div class="nt-stat"><div class="nt-stat-val" id="ntScore">0</div><div class="nt-stat-lbl">Score</div></div>
+    <div class="nt-stat"><div class="nt-stat-val" id="ntStreak">0</div><div class="nt-stat-lbl">Streak</div></div>
+    <div class="nt-stat"><div class="nt-stat-val" id="ntAcc">—</div><div class="nt-stat-lbl">Accuracy</div></div>
+    <div class="nt-stat"><div class="nt-stat-val" id="ntBest">0</div><div class="nt-stat-lbl">Best</div></div>
+  </div>
+  <div class="nt-main">
+    <div class="nt-diff" id="ntDiff"></div>
+    <div class="nt-mode" id="ntMode"></div>
+    <div class="nt-timer" id="ntTimer"></div>
+    <div class="nt-challenge" id="ntChallenge">
+      <div class="nt-challenge-lbl">Find this note</div>
+      <div class="nt-challenge-note" id="ntTarget">—</div>
+      <div class="nt-challenge-pos" id="ntPos"></div>
+    </div>
+    <div class="nt-fb-wrap" id="ntFbWrap">
+      <div id="ntFretboard"></div>
+    </div>
+    <div class="nt-detect" id="ntDetect">
+      <div class="nt-detect-note" id="ntDetected">—</div>
+      <div class="nt-cents-wrap">
+        <span class="nt-cents-lbl" id="ntCentsLbl"></span>
+        <div class="nt-cents-bar"><div class="nt-cents-ind" id="ntCentsInd"></div></div>
+      </div>
+      <div class="nt-hz" id="ntHz"></div>
+    </div>
+    <div class="nt-msg" id="ntMsg">Press Start to begin</div>
+  </div>
+  <div class="nt-controls" id="ntControls">
+    <button class="nt-btn nt-primary" id="ntStart">Start</button>
+    <button class="nt-btn" id="ntSkip" style="display:none">Skip</button>
+    <button class="nt-btn nt-danger" id="ntStop" style="display:none">Stop</button>
+    <button class="nt-btn" id="ntReset" style="display:none">Reset</button>
+  </div>
+</div>
+<script src="js/shared.js"></script>
+<script src="js/trainer-core.js"></script>
+<script src="js/note-find.js"></script>
+</body>
+</html>

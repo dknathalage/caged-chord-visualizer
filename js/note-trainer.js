@@ -187,7 +187,7 @@ function pickTraversal() {
     for (let s = 0; s < 6; s++) {
       const ff = fretForNote(s, n, d.maxFret);
       if (ff.length === 0) { allStrings = false; break; }
-      frets.push(ff[0]);
+      frets.push(ff);
     }
     if (allStrings) valid.push({note: n, frets});
   }
@@ -364,7 +364,8 @@ function showTravFretReveal(str, fret, isCorrect) {
   const target = {note: st.travNote, str, fret, midi: BASE_MIDI[str] + fret};
   els.ntFbWrap.style.display = '';
   els.ntFretboard.innerHTML = renderFB(target, null, isCorrect);
-  els.ntFbWrap.classList.add(isCorrect ? 'nt-success' : '', 'nt-flash');
+  if (isCorrect) els.ntFbWrap.classList.add('nt-success');
+  els.ntFbWrap.classList.add('nt-flash');
   setTimeout(() => {
     els.ntFbWrap.classList.remove('nt-success', 'nt-flash');
     if (st.exercise === 'traverse' && st.phase === 'listening') {
@@ -376,7 +377,7 @@ function showTravFretReveal(str, fret, isCorrect) {
 function showTravAllPositions() {
   let positions = [];
   for (let s = 0; s < 6; s++) {
-    positions.push(`${NT_STR_NAMES[s]}:${st.travFrets[s]}`);
+    positions.push(`${NT_STR_NAMES[s]}:${st.travFrets[s][0]}`);
   }
   els.ntFbWrap.style.display = '';
   els.ntFretboard.innerHTML =
@@ -523,9 +524,9 @@ function detectNote(note, cents, hz, semi) {
 function detectTraversal(note, cents, hz, semi) {
   const noteMatch = note === st.travNote;
   const curStr = st.travIdx;
-  const expectedMidi = BASE_MIDI[curStr] + st.travFrets[curStr];
   const detectedMidi = semi + 69;
-  const midiOk = Math.abs(detectedMidi - expectedMidi) <= 1;
+  const validFrets = st.travFrets[curStr];
+  const midiOk = validFrets.some(f => Math.abs(detectedMidi - (BASE_MIDI[curStr] + f)) <= 1);
   const correct = noteMatch && midiOk;
   showDetected(note, cents, hz, correct);
 
@@ -557,7 +558,7 @@ function detectTraversal(note, cents, hz, semi) {
 
 function onTravStringCorrect() {
   st.travDone[st.travIdx] = true;
-  showTravFretReveal(st.travIdx, st.travFrets[st.travIdx], true);
+  showTravFretReveal(st.travIdx, st.travFrets[st.travIdx][0], true);
   st.travIdx++;
   st.holdStart = 0;
   renderTravDots();
@@ -692,6 +693,7 @@ function onSkip() {
 }
 
 function onTravSkip() {
+  st.phase = 'success';
   st.streak = 0;
   st.attempts++;
   st.score = Math.max(0, st.score - 10);
@@ -700,7 +702,9 @@ function onTravSkip() {
   showTravAllPositions();
   els.ntMsg.textContent = 'Skipped \u2014 positions revealed';
   els.ntMsg.className = 'nt-msg nt-err';
-  setTimeout(() => nextChallenge(), 2500);
+  setTimeout(() => {
+    if (st.phase === 'success') nextChallenge();
+  }, 2500);
 }
 
 function onTimeout() {
@@ -734,6 +738,7 @@ function onTimeout() {
 }
 
 function onTravTimeout() {
+  st.phase = 'success';
   st.streak = 0;
   st.attempts++;
   st.score = Math.max(0, st.score - 10);
@@ -742,7 +747,7 @@ function onTravTimeout() {
   els.ntMsg.textContent = 'Time\'s up! Positions revealed';
   els.ntMsg.className = 'nt-msg nt-err';
   setTimeout(() => {
-    if (st.phase === 'listening') nextChallenge();
+    if (st.phase === 'success') nextChallenge();
   }, 2500);
 }
 
