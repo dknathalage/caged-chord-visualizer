@@ -39,22 +39,35 @@ export class AudioManager {
   }
 
   startLoop(onDetect, onSilence) {
+    let prevNote = null;
+    let stableCount = 0;
+    const STABLE_FRAMES = 3;
     const loop = () => {
       if (!this.analyser) return;
       this.analyser.getFloatTimeDomainData(this.buf);
-      if (rms(this.buf) < 0.003) {
+      if (rms(this.buf) < 0.01) {
+        prevNote = null; stableCount = 0;
         onSilence();
         this.rafId = requestAnimationFrame(loop);
         return;
       }
       const hz = yinDetect(this.buf, this.audioCtx.sampleRate);
       if (!hz || hz < 50 || hz > 1400) {
+        prevNote = null; stableCount = 0;
         onSilence();
         this.rafId = requestAnimationFrame(loop);
         return;
       }
       const {note, cents, semi} = freqToNote(hz);
-      onDetect(note, cents, hz, semi);
+      if (note === prevNote) {
+        stableCount++;
+      } else {
+        prevNote = note;
+        stableCount = 1;
+      }
+      if (stableCount >= STABLE_FRAMES) {
+        onDetect(note, cents, hz, semi);
+      }
       this.rafId = requestAnimationFrame(loop);
     };
     loop();

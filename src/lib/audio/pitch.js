@@ -42,7 +42,7 @@ export function yinDetect(buf, sampleRate) {
   const s2 = tau + 1 < halfLen ? d[tau + 1] : d[tau];
   const betterTau = tau + (s0 - s2) / (2 * (s0 - 2 * s1 + s2));
   const confidence = 1 - d[tau];
-  if (confidence < 0.70) return null;
+  if (confidence < 0.85) return null;
   return sampleRate / betterTau;
 }
 
