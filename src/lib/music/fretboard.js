@@ -23,7 +23,7 @@ export function shuffle(arr) {
 
 // ---- Fretboard layout config — change these to resize everything ----
 export const FB = {
-  FRETS: 12,   // number of frets visible
+  FRETS: 7,    // number of frets visible (window around target)
   FW:    58,   // fret width  (viewBox units)
   SH:    36,   // string spacing (viewBox units)
   DOT:   16,   // note dot radius
