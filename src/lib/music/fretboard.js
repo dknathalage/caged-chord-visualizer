@@ -21,97 +21,106 @@ export function shuffle(arr) {
   return arr;
 }
 
-export function renderFB(target, detected, isCorrect) {
-  const WIN = 5;
-  let sf = Math.max(0, target.fret - 2);
-  if (sf + WIN > 22) sf = Math.max(0, 22 - WIN);
-  const FL = 42, FR = 380, TOP = 18, FH = 30;
-  const FW = (FR - FL) / WIN, W = FR + 16, H = TOP + 6 * FH + 14;
+// ---- Fretboard layout config — change these to resize everything ----
+export const FB = {
+  FRETS: 12,   // number of frets visible
+  FW:    58,   // fret width  (viewBox units)
+  SH:    36,   // string spacing (viewBox units)
+  DOT:   16,   // note dot radius
+};
+
+// Derived viewBox dimensions (use for placeholder SVGs etc.)
+export function fbDims() {
+  const { FRETS, FW, SH, DOT } = FB;
+  const MG = DOT * 2.5;
+  const W = Math.ceil(MG + FRETS * FW + MG * 0.5);
+  const H = Math.ceil(DOT * 1.8 + 6 * SH + DOT * 1.5);
+  return { W, H };
+}
+
+// Shared fretboard renderer — draws board structure, calls dotsFn for note markers
+export function drawBoard(sf, dotsFn) {
+  const { FRETS, FW, SH, DOT } = FB;
+  const MG  = DOT * 2.5;
+  const FL  = MG, FR = FL + FRETS * FW;
+  const TOP = DOT * 1.8;
+  const W   = Math.ceil(FR + MG * 0.5);
+  const H   = Math.ceil(TOP + 6 * SH + DOT * 1.5);
   const isOpen = sf === 0;
+  const NW  = Math.max(4, DOT * 0.35);
+
   let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<rect x="${FL-4}" y="${TOP}" width="${FR-FL+8}" height="${6*FH}" rx="3" fill="#1a1a2e"/>`;
-  for (let i = 0; i <= WIN; i++) {
+  s += `<rect x="${FL - NW}" y="${TOP}" width="${FR - FL + 2 * NW}" height="${6 * SH}" rx="${NW}" fill="#1a1a2e"/>`;
+
+  for (let i = 0; i <= FRETS; i++) {
     const x = FL + i * FW;
     s += i === 0 && isOpen
-      ? `<rect x="${x-2}" y="${TOP}" width="4" height="${6*FH}" rx="2" fill="#ddd"/>`
-      : `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP+6*FH}" stroke="#333" stroke-width="1.2"/>`;
+      ? `<rect x="${x - NW/2}" y="${TOP}" width="${NW}" height="${6 * SH}" rx="${NW/2}" fill="#ddd"/>`
+      : `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP + 6 * SH}" stroke="#333" stroke-width="${Math.max(1, FW * 0.035)}"/>`;
   }
+
   for (let i = 0; i < 6; i++) {
-    const ri = 5 - i, y = TOP + i * FH + FH / 2;
-    s += `<line x1="${FL}" y1="${y}" x2="${FR}" y2="${y}" stroke="#444" stroke-width="${2.2-ri*.25}"/>`;
-    s += `<text x="${FL-16}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="13" font-family="JetBrains Mono">${NT_STR_NAMES[ri]}</text>`;
+    const ri = 5 - i, y = TOP + i * SH + SH / 2;
+    s += `<line x1="${FL}" y1="${y}" x2="${FR}" y2="${y}" stroke="#444" stroke-width="${SH * 0.075 - ri * SH * 0.009}"/>`;
+    s += `<text x="${MG * 0.4}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="${DOT}" font-family="JetBrains Mono">${NT_STR_NAMES[ri]}</text>`;
   }
-  for (let i = 0; i < WIN; i++) {
+
+  for (let i = 0; i < FRETS; i++) {
     const x = FL + i * FW + FW / 2;
-    s += `<text x="${x}" y="${TOP+6*FH+11}" text-anchor="middle" fill="#444" font-size="11" font-family="JetBrains Mono">${sf+i+1}</text>`;
+    s += `<text x="${x}" y="${TOP + 6 * SH + DOT * 1.1}" text-anchor="middle" fill="#444" font-size="${DOT * 0.85}" font-family="JetBrains Mono">${sf + i + 1}</text>`;
   }
-  const inlays = [3,5,7,9,15,17,19,21];
-  for (let i = 0; i < WIN; i++) {
+
+  const inlays = [3, 5, 7, 9, 15, 17, 19, 21];
+  const IR = Math.max(2, DOT * 0.2);
+  for (let i = 0; i < FRETS; i++) {
     const fn = sf + i + 1, x = FL + i * FW + FW / 2;
-    if (inlays.includes(fn)) s += `<circle cx="${x}" cy="${TOP-6}" r="2.5" fill="#333"/>`;
+    if (inlays.includes(fn)) s += `<circle cx="${x}" cy="${TOP - IR * 2.5}" r="${IR}" fill="#333"/>`;
     if (fn === 12) {
-      s += `<circle cx="${x-5}" cy="${TOP-6}" r="2.5" fill="#333"/>`;
-      s += `<circle cx="${x+5}" cy="${TOP-6}" r="2.5" fill="#333"/>`;
+      s += `<circle cx="${x - IR * 2}" cy="${TOP - IR * 2.5}" r="${IR}" fill="#333"/>`;
+      s += `<circle cx="${x + IR * 2}" cy="${TOP - IR * 2.5}" r="${IR}" fill="#333"/>`;
     }
   }
-  const tfr = target.fret - sf;
-  if (tfr >= 0 && tfr <= WIN) {
-    const cy = TOP + (5 - target.str) * FH + FH / 2;
-    const cx = target.fret === 0 ? FL + 2 : FL + (tfr - 1) * FW + FW / 2;
-    const col = isCorrect ? '#4ECB71' : '#58A6FF';
-    s += `<circle cx="${cx}" cy="${cy}" r="16" fill="${col}" opacity=".15"/>`;
-    s += `<circle cx="${cx}" cy="${cy}" r="12" fill="${col}"/>`;
-    const fs = target.note.length > 1 ? 10 : 13;
-    s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs}" font-weight="bold" font-family="JetBrains Mono">${target.note}</text>`;
-  }
+
+  s += dotsFn({ FL, TOP, SH, FW, DOT, sf, FRETS });
   s += `</svg>`;
   return s;
 }
 
+// Compute start-fret for a sliding window centered on a target fret
+function _sf(targetFret) {
+  let sf = Math.max(0, targetFret - Math.floor(FB.FRETS / 2));
+  if (sf + FB.FRETS > 22) sf = Math.max(0, 22 - FB.FRETS);
+  return sf;
+}
+
+export function renderFB(target, detected, isCorrect) {
+  return drawBoard(_sf(target.fret), ({ FL, TOP, SH, FW, DOT, sf, FRETS }) => {
+    const tfr = target.fret - sf;
+    if (tfr < 0 || tfr > FRETS) return '';
+    const cy = TOP + (5 - target.str) * SH + SH / 2;
+    const cx = target.fret === 0 ? FL + DOT * 0.2 : FL + (tfr - 1) * FW + FW / 2;
+    const col = isCorrect ? '#4ECB71' : '#58A6FF';
+    const fs = target.note.length > 1 ? DOT * 0.8 : DOT;
+    let d = '';
+    d += `<circle cx="${cx}" cy="${cy}" r="${DOT * 1.3}" fill="${col}" opacity=".15"/>`;
+    d += `<circle cx="${cx}" cy="${cy}" r="${DOT}" fill="${col}"/>`;
+    d += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs}" font-weight="bold" font-family="JetBrains Mono">${target.note}</text>`;
+    return d;
+  });
+}
+
 export function fbMiniBoard(str, fret) {
-  const QZ_STR_NAMES = NT_STR_NAMES;
-  const WIN = 5;
-  let sf = Math.max(0, fret - 2);
-  if (sf + WIN > 22) sf = Math.max(0, 22 - WIN);
-  const FL = 42, FR = 340, TOP = 18, FH = 28;
-  const FW = (FR - FL) / WIN, W = FR + 16, H = TOP + 6 * FH + 14;
-  const isOpen = sf === 0;
-  let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-  s += `<rect x="${FL-4}" y="${TOP}" width="${FR-FL+8}" height="${6*FH}" rx="3" fill="#1a1a2e"/>`;
-  for (let i = 0; i <= WIN; i++) {
-    const x = FL + i * FW;
-    s += i === 0 && isOpen
-      ? `<rect x="${x-2}" y="${TOP}" width="4" height="${6*FH}" rx="2" fill="#ddd"/>`
-      : `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP+6*FH}" stroke="#333" stroke-width="1.2"/>`;
-  }
-  for (let i = 0; i < 6; i++) {
-    const ri = 5 - i, y = TOP + i * FH + FH / 2;
-    s += `<line x1="${FL}" y1="${y}" x2="${FR}" y2="${y}" stroke="#444" stroke-width="${2.2-ri*.25}"/>`;
-    s += `<text x="${FL-16}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="12" font-family="JetBrains Mono">${QZ_STR_NAMES[ri]}</text>`;
-  }
-  for (let i = 0; i < WIN; i++) {
-    const x = FL + i * FW + FW / 2;
-    s += `<text x="${x}" y="${TOP+6*FH+11}" text-anchor="middle" fill="#444" font-size="10" font-family="JetBrains Mono">${sf+i+1}</text>`;
-  }
-  const inlays = [3,5,7,9,15,17,19,21];
-  for (let i = 0; i < WIN; i++) {
-    const fn = sf + i + 1, x = FL + i * FW + FW / 2;
-    if (inlays.includes(fn)) s += `<circle cx="${x}" cy="${TOP-5}" r="2" fill="#333"/>`;
-    if (fn === 12) {
-      s += `<circle cx="${x-4}" cy="${TOP-5}" r="2" fill="#333"/>`;
-      s += `<circle cx="${x+4}" cy="${TOP-5}" r="2" fill="#333"/>`;
-    }
-  }
-  const tfr = fret - sf;
-  if (tfr >= 0 && tfr <= WIN) {
-    const cy = TOP + (5 - str) * FH + FH / 2;
-    const cx = fret === 0 ? FL + 2 : FL + (tfr - 1) * FW + FW / 2;
-    s += `<circle cx="${cx}" cy="${cy}" r="12" fill="#C084FC" opacity=".15"/>`;
-    s += `<circle cx="${cx}" cy="${cy}" r="9" fill="#C084FC"/>`;
-    s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="13" font-weight="bold" font-family="JetBrains Mono">?</text>`;
-  }
-  s += `</svg>`;
-  return s;
+  return drawBoard(_sf(fret), ({ FL, TOP, SH, FW, DOT, sf, FRETS }) => {
+    const tfr = fret - sf;
+    if (tfr < 0 || tfr > FRETS) return '';
+    const cy = TOP + (5 - str) * SH + SH / 2;
+    const cx = fret === 0 ? FL + DOT * 0.2 : FL + (tfr - 1) * FW + FW / 2;
+    let d = '';
+    d += `<circle cx="${cx}" cy="${cy}" r="${DOT * 1.1}" fill="#C084FC" opacity=".15"/>`;
+    d += `<circle cx="${cx}" cy="${cy}" r="${DOT * 0.8}" fill="#C084FC"/>`;
+    d += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${DOT}" font-weight="bold" font-family="JetBrains Mono">?</text>`;
+    return d;
+  });
 }
 
 export function scaleSequence(ri, iv, startFret, maxFret) {

@@ -285,7 +285,7 @@
 </div>
 
 <style>
-  .nt-wrap{display:flex;flex-direction:column;height:100vh;width:100%;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
+  .nt-wrap{display:flex;flex-direction:column;min-height:100vh;width:100%;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
   .nt-hdr{display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:.5rem}
   .nt-hdr h1{font-size:18px;font-weight:900;letter-spacing:-1px}
   .nt-nav{display:flex;gap:.4rem}
@@ -334,7 +334,7 @@
     box-shadow:0 0 15px rgba(255,107,107,.2);pointer-events:none;
   }
   .qz-extra{text-align:center;min-height:0}
-  .qz-extra :global(svg){max-width:360px;width:100%}
+  .qz-extra :global(svg){max-width:700px;width:100%}
 
   @media(max-width:600px){
     .nt-wrap{padding:.5rem;gap:.4rem}

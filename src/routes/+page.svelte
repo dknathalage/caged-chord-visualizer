@@ -5,14 +5,16 @@
 
   let progress = $state(loadProgress());
 
+  let displayChapters = $derived(CHAPTERS.filter(ch => ch.id <= 7));
+
   let chapProgress = $derived(
-    Object.fromEntries(CHAPTERS.map(ch => [
+    Object.fromEntries(displayChapters.map(ch => [
       ch.id,
       ch.exercises.length > 0 ? getChapterProgress(ch.id, CHAPTERS) : { total: 0, completed: 0, pct: 0 }
     ]))
   );
 
-  let totalExercises = $derived(CHAPTERS.reduce((s, c) => s + c.exercises.length, 0));
+  let totalExercises = $derived(displayChapters.reduce((s, c) => s + c.exercises.length, 0));
   let totalCompleted = $derived(Object.values(chapProgress).reduce((s, p) => s + p.completed, 0));
 
   function isCompleted(exId) {
@@ -36,20 +38,17 @@
     <div class="tree-sub">
       <span class="tree-sub-track">{totalCompleted}/{totalExercises} exercises</span>
       <span class="tree-sub-sep">&middot;</span>
-      <span>9 chapters</span>
+      <span>7 chapters</span>
     </div>
   </header>
 
-  <div class="chapter-list">
-    {#each CHAPTERS as ch, i}
+  <div class="chapter-grid">
+    {#each displayChapters as ch, i}
       {@const prog = chapProgress[ch.id]}
-      <div class="chapter-card" style="--ch-color:{ch.color}; --delay:{i * 0.06}s">
-        {#if i > 0}
-          <div class="card-connector"></div>
-        {/if}
+      <div class="chapter-card" style="--ch-color:{ch.color}; --delay:{i * 0.04}s">
         <div class="card-header">
           <div class="card-node">
-            <div class="card-ring">{@html renderRing(prog.pct, ch.color, 52)}</div>
+            <div class="card-ring">{@html renderRing(prog.pct, ch.color, 44)}</div>
             <div class="card-num">{ch.id}</div>
             {#if prog.pct === 100}
               <div class="card-check">&#10003;</div>
@@ -65,37 +64,24 @@
           </div>
         </div>
 
-        <div class="card-body">
-          <div class="card-theory">
-            <div class="section-label">Key Concepts</div>
-            <ul class="theory-bullets">
-              {#each ch.theory as bullet}
-                <li>{bullet}</li>
-              {/each}
-            </ul>
+        {#if ch.exercises.length > 0}
+          <div class="exercise-list">
+            {#each ch.exercises as ex}
+              <a href="{base}{ex.path}" class="exercise-link" onclick={refreshProgress}>
+                <span class="ex-name">{ex.name}</span>
+                <span class="ex-badges">
+                  {#if ex.mic}<span class="ex-mic" title="Uses microphone">&#127908;</span>{/if}
+                  {#if isCompleted(ex.id)}<span class="ex-done">&#10003;</span>{/if}
+                </span>
+              </a>
+            {/each}
           </div>
-          {#if ch.exercises.length > 0}
-            <div class="card-exercises">
-              <div class="section-label">Exercises</div>
-              <div class="exercise-list">
-                {#each ch.exercises as ex}
-                  <a href="{base}{ex.path}" class="exercise-link" onclick={refreshProgress}>
-                    <span class="ex-name">{ex.name}</span>
-                    <span class="ex-badges">
-                      {#if ex.mic}<span class="ex-mic" title="Uses microphone">&#127908;</span>{/if}
-                      {#if isCompleted(ex.id)}<span class="ex-done">&#10003;</span>{/if}
-                    </span>
-                  </a>
-                {/each}
-              </div>
-            </div>
-          {:else}
-            <div class="card-placeholder">
-              <span>Exercises coming soon</span>
-              <a href="https://github.com/dknathalage/guitar-learning/blob/main/{ch.docsPath}" class="docs-link" target="_blank" rel="noopener">Read chapter notes &rarr;</a>
-            </div>
-          {/if}
-        </div>
+        {:else}
+          <div class="card-placeholder">
+            <span>Exercises coming soon</span>
+            <a href="https://github.com/dknathalage/guitar-learning/blob/main/{ch.docsPath}" class="docs-link" target="_blank" rel="noopener">Read notes &rarr;</a>
+          </div>
+        {/if}
       </div>
     {/each}
   </div>
@@ -158,13 +144,13 @@
     opacity: .4;
   }
 
-  /* ── Chapter List ── */
-  .chapter-list {
+  /* ── Chapter Grid ── */
+  .chapter-grid {
     width: 100%;
-    max-width: 640px;
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
+    max-width: 1100px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
   }
 
   /* ── Chapter Card ── */
@@ -172,29 +158,32 @@
     position: relative;
     background: var(--sf);
     border: 1px solid var(--bd);
-    border-left: 3px solid var(--ch-color);
+    border-top: 3px solid var(--ch-color);
     border-radius: 14px;
-    padding: 1.4rem 1.6rem;
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: .8rem;
     opacity: 0;
     animation: fadeUp .5s ease forwards;
     animation-delay: var(--delay, 0s);
+    transition: border-color .2s, box-shadow .2s;
   }
-
-  .card-connector {
-    display: none;
+  .chapter-card:hover {
+    border-color: var(--ch-color);
+    box-shadow: 0 4px 20px color-mix(in srgb, var(--ch-color) 10%, transparent);
   }
 
   .card-header {
     display: flex;
     align-items: center;
-    gap: .9rem;
-    margin-bottom: 1rem;
+    gap: .7rem;
   }
 
   .card-node {
     position: relative;
-    width: 52px;
-    height: 52px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     background: var(--sf);
     display: flex;
@@ -216,7 +205,7 @@
     position: relative;
     z-index: 2;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 1.15rem;
+    font-size: 1rem;
     font-weight: 800;
     color: var(--ch-color);
     text-shadow: 0 0 12px color-mix(in srgb, var(--ch-color) 30%, transparent);
@@ -243,102 +232,59 @@
     min-width: 0;
   }
   .card-title {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     font-weight: 700;
     color: var(--ch-color);
   }
   .card-progress {
     font-family: 'JetBrains Mono', monospace;
-    font-size: .75rem;
-    color: var(--mt);
-    margin-top: .2rem;
-  }
-
-  /* ── Card Body ── */
-  .card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding-left: .25rem;
-  }
-
-  .section-label {
-    font-family: 'JetBrains Mono', monospace;
     font-size: .7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
     color: var(--mt);
-    margin-bottom: .5rem;
+    margin-top: .15rem;
   }
 
-  .theory-bullets {
-    list-style: none;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: .45rem;
-  }
-  .theory-bullets li {
-    font-size: .9rem;
-    color: var(--tx);
-    line-height: 1.5;
-    padding-left: 1rem;
-    position: relative;
-    opacity: .85;
-  }
-  .theory-bullets li::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: .5em;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--ch-color);
-    opacity: .5;
-  }
-
+  /* ── Exercises ── */
   .exercise-list {
     display: flex;
     flex-direction: column;
-    gap: .5rem;
+    gap: .4rem;
+    flex: 1;
   }
   .exercise-link {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: .7rem 1rem;
+    padding: .5rem .75rem;
     background: var(--sf2);
     border: 1px solid var(--bd);
-    border-radius: 10px;
+    border-radius: 8px;
     text-decoration: none;
     color: var(--tx);
     transition: all .15s;
-    gap: .5rem;
+    gap: .4rem;
   }
   .exercise-link:hover {
     border-color: var(--ch-color);
     background: color-mix(in srgb, var(--ch-color) 6%, var(--sf2));
-    transform: translateX(3px);
+    transform: translateY(-1px);
   }
   .ex-name {
-    font-size: .95rem;
+    font-size: .85rem;
     font-weight: 600;
   }
   .ex-badges {
     display: flex;
     align-items: center;
-    gap: .4rem;
+    gap: .35rem;
     flex-shrink: 0;
   }
   .ex-mic {
-    font-size: .75rem;
+    font-size: .7rem;
     opacity: .5;
   }
   .ex-done {
     color: #4ECB71;
-    font-size: .85rem;
+    font-size: .8rem;
     font-weight: 700;
     text-shadow: 0 0 6px rgba(78,203,113,.4);
   }
@@ -346,19 +292,20 @@
   .card-placeholder {
     display: flex;
     flex-direction: column;
-    gap: .5rem;
-    padding: .9rem;
+    gap: .4rem;
+    padding: .7rem;
     background: var(--sf2);
     border: 1px dashed var(--bd);
-    border-radius: 10px;
-    font-size: .9rem;
+    border-radius: 8px;
+    font-size: .8rem;
     color: var(--mt);
+    flex: 1;
   }
   .docs-link {
     color: var(--ch-color);
     text-decoration: none;
     font-family: 'JetBrains Mono', monospace;
-    font-size: .8rem;
+    font-size: .75rem;
     font-weight: 600;
     transition: opacity .15s;
   }
@@ -409,10 +356,14 @@
   }
 
   /* ── Responsive ── */
-  @media (max-width: 768px) {
-    .tree-page { padding: 1.5rem 1rem 5rem; }
+  @media (max-width: 900px) {
+    .chapter-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 580px) {
+    .tree-page { padding: 1.5rem .75rem 5rem; }
     .tree-header { margin-bottom: 1.5rem; }
-    .chapter-card { padding: 1rem 1.1rem; }
+    .chapter-grid { grid-template-columns: 1fr; max-width: 400px; }
+    .chapter-card { padding: 1rem; }
     .tuner-fab { bottom: 1rem; right: 1rem; }
   }
 </style>

@@ -4,7 +4,7 @@
   import { saveExercise } from '$lib/progress.js';
   import { NOTES, MODES } from '$lib/constants/music.js';
   import { AudioManager } from '$lib/audio/AudioManager.js';
-  import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, scaleSequence } from '$lib/music/fretboard.js';
+  import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, scaleSequence, FB, drawBoard } from '$lib/music/fretboard.js';
 
   const MT_DIFF = {
     beginner:    {label:'Beginner',    modes:['ionian','aeolian'], naturalsOnly:true,  dir:'up',   timer:0,  tip:'Ionian+Aeolian \u00b7 Naturals'},
@@ -132,86 +132,38 @@
     }
   }
 
-  // --- Inline mode fretboard renderer ---
+  // --- Mode fretboard renderer (uses shared drawBoard) ---
   function renderModeFB(seq, currentIdx) {
     if (!challenge) return '';
-    const sf = challenge.startFret;
-    const WIN = 5;
-    const endFret = sf + WIN - 1;
-    const FL = 42, FR = 380, TOP = 18, FH = 30;
-    const FW = (FR - FL) / WIN, W = FR + 16, H = TOP + 6 * FH + 14;
-    const isOpen = sf === 0;
+    const center = challenge.startFret + 2;
+    let sf = Math.max(0, center - Math.floor(FB.FRETS / 2));
+    if (sf + FB.FRETS > 22) sf = Math.max(0, 22 - FB.FRETS);
 
-    let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-    s += `<rect x="${FL-4}" y="${TOP}" width="${FR-FL+8}" height="${6*FH}" rx="3" fill="#1a1a2e"/>`;
-
-    // Fret lines
-    for (let i = 0; i <= WIN; i++) {
-      const x = FL + i * FW;
-      s += i === 0 && isOpen
-        ? `<rect x="${x-2}" y="${TOP}" width="4" height="${6*FH}" rx="2" fill="#ddd"/>`
-        : `<line x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP+6*FH}" stroke="#333" stroke-width="1.2"/>`;
-    }
-
-    // Strings
-    for (let i = 0; i < 6; i++) {
-      const ri = 5 - i, y = TOP + i * FH + FH / 2;
-      s += `<line x1="${FL}" y1="${y}" x2="${FR}" y2="${y}" stroke="#444" stroke-width="${2.2-ri*.25}"/>`;
-      s += `<text x="${FL-16}" y="${y}" text-anchor="middle" dominant-baseline="central" fill="#444" font-size="13" font-family="JetBrains Mono">${NT_STR_NAMES[ri]}</text>`;
-    }
-
-    // Fret numbers
-    for (let i = 0; i < WIN; i++) {
-      const x = FL + i * FW + FW / 2;
-      s += `<text x="${x}" y="${TOP+6*FH+11}" text-anchor="middle" fill="#444" font-size="11" font-family="JetBrains Mono">${sf+i+1}</text>`;
-    }
-
-    // Inlays
-    const inlays = [3,5,7,9,15,17,19,21];
-    for (let i = 0; i < WIN; i++) {
-      const fn = sf + i + 1, x = FL + i * FW + FW / 2;
-      if (inlays.includes(fn)) s += `<circle cx="${x}" cy="${TOP-6}" r="2.5" fill="#333"/>`;
-      if (fn === 12) {
-        s += `<circle cx="${x-5}" cy="${TOP-6}" r="2.5" fill="#333"/>`;
-        s += `<circle cx="${x+5}" cy="${TOP-6}" r="2.5" fill="#333"/>`;
+    return drawBoard(sf, ({ FL, TOP, SH, FW, DOT, sf, FRETS }) => {
+      const uniqueNotes = [...new Map(seq.map(n => [`${n.str}-${n.fret}`, n])).values()];
+      let d = '';
+      for (const n of uniqueNotes) {
+        const tfr = n.fret - sf;
+        if (tfr < 0 || tfr > FRETS) continue;
+        const cy = TOP + (5 - n.str) * SH + SH / 2;
+        const cx = n.fret === 0 ? FL + DOT * 0.2 : FL + (tfr - 1) * FW + FW / 2;
+        const seqIdx = seq.findIndex(sn => sn.str === n.str && sn.fret === n.fret);
+        const lastIdx = seq.findLastIndex(sn => sn.str === n.str && sn.fret === n.fret);
+        let col, opacity;
+        if (seqIdx <= currentIdx && lastIdx <= currentIdx) {
+          col = '#4ECB71'; opacity = 0.4;
+        } else if (seqIdx === currentIdx || lastIdx === currentIdx) {
+          col = '#4ECB71'; opacity = 1.0;
+        } else {
+          col = '#58A6FF'; opacity = 0.7;
+        }
+        d += `<circle cx="${cx}" cy="${cy}" r="${DOT * 1.3}" fill="${col}" opacity="${opacity * 0.15}"/>`;
+        d += `<circle cx="${cx}" cy="${cy}" r="${DOT}" fill="${col}" opacity="${opacity}"/>`;
+        const fs = n.note.length > 1 ? DOT * 0.8 : DOT;
+        d += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs}" font-weight="bold" font-family="JetBrains Mono">${n.note}</text>`;
       }
-    }
-
-    // Deduplicate by str-fret for rendering
-    const uniqueNotes = [...new Map(seq.map(n => [`${n.str}-${n.fret}`, n])).values()];
-
-    // Draw mode dots
-    for (const n of uniqueNotes) {
-      const tfr = n.fret - sf;
-      if (tfr < 0 || tfr > WIN) continue;
-      const cy = TOP + (5 - n.str) * FH + FH / 2;
-      const cx = n.fret === 0 ? FL + 2 : FL + (tfr - 1) * FW + FW / 2;
-
-      // Find the first index of this note position in the sequence
-      const seqIdx = seq.findIndex(sn => sn.str === n.str && sn.fret === n.fret);
-      // Find the last index (for up+down patterns where notes repeat)
-      const lastIdx = seq.findLastIndex(sn => sn.str === n.str && sn.fret === n.fret);
-
-      let col, opacity;
-      if (seqIdx <= currentIdx && lastIdx <= currentIdx) {
-        // All occurrences completed
-        col = '#4ECB71'; opacity = 0.4;
-      } else if (seqIdx === currentIdx || lastIdx === currentIdx) {
-        // Current note
-        col = '#4ECB71'; opacity = 1.0;
-      } else {
-        // Upcoming
-        col = '#58A6FF'; opacity = 0.7;
-      }
-
-      s += `<circle cx="${cx}" cy="${cy}" r="16" fill="${col}" opacity="${opacity * 0.15}"/>`;
-      s += `<circle cx="${cx}" cy="${cy}" r="12" fill="${col}" opacity="${opacity}"/>`;
-      const fs = n.note.length > 1 ? 10 : 13;
-      s += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs}" font-weight="bold" font-family="JetBrains Mono">${n.note}</text>`;
-    }
-
-    s += `</svg>`;
-    return s;
+      return d;
+    });
   }
 
   // --- Challenge picking ---
@@ -429,7 +381,7 @@
 </div>
 
 <style>
-  .nt-wrap{display:flex;flex-direction:column;height:100vh;width:100%;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
+  .nt-wrap{display:flex;flex-direction:column;min-height:100vh;width:100%;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
   .nt-hdr{display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:.5rem}
   .nt-hdr h1{font-size:18px;font-weight:900;letter-spacing:-1px}
   .nt-nav{display:flex;gap:.4rem}
@@ -441,7 +393,7 @@
   .nt-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;min-height:0}
   .nt-challenge-lbl{font-size:13px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem}
   .nt-challenge-note{font-family:'JetBrains Mono',monospace;font-size:56px;font-weight:700;color:var(--ac);line-height:1}
-  .nt-fb-wrap{background:var(--sf);border:2px solid var(--bd);border-radius:10px;padding:.5rem;width:100%;max-width:420px;transition:border-color .3s,box-shadow .3s}
+  .nt-fb-wrap{background:var(--sf);border:2px solid var(--bd);border-radius:10px;padding:.5rem;width:100%;max-width:700px;transition:border-color .3s,box-shadow .3s}
   .nt-fb-wrap.nt-success{border-color:#4ECB71;box-shadow:0 0 20px rgba(78,203,113,.25)}
   .nt-detect{text-align:center;margin-top:.3rem}
   .nt-detect-note{font-family:'JetBrains Mono',monospace;font-size:36px;font-weight:700;color:var(--mt);line-height:1;transition:color .15s}

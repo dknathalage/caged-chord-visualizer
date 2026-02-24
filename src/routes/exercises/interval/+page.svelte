@@ -4,7 +4,7 @@
   import { saveExercise } from '$lib/progress.js';
   import { NOTES, INTERVALS } from '$lib/constants/music.js';
   import { AudioManager } from '$lib/audio/AudioManager.js';
-  import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, fretForNote, renderFB } from '$lib/music/fretboard.js';
+  import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, fretForNote, renderFB, fbDims } from '$lib/music/fretboard.js';
 
   const INTV_DIFF = {
     beginner:    {label:'Beginner',    maxFret:10, naturalsOnly:true,  timer:0,  intervals:[3,4,5,7,12], tip:'5 common intervals \u00b7 Naturals'},
@@ -175,7 +175,7 @@
     if (recall) {
       targetDisplay = '?';
       targetHidden = true;
-      fbHtml = '<svg viewBox="0 0 396 212" xmlns="http://www.w3.org/2000/svg"><text x="198" y="106" text-anchor="middle" dominant-baseline="central" fill="#222" font-size="60" font-family="Outfit" font-weight="900">?</text></svg>';
+      const _d = fbDims(); fbHtml = `<svg viewBox="0 0 ${_d.W} ${_d.H}" xmlns="http://www.w3.org/2000/svg"><text x="${_d.W/2}" y="${_d.H/2}" text-anchor="middle" dominant-baseline="central" fill="#222" font-size="60" font-family="Outfit" font-weight="900">?</text></svg>`;
     } else {
       targetDisplay = intvTarget;
       targetHidden = false;
@@ -359,7 +359,7 @@
 </div>
 
 <style>
-  .nt-wrap{display:flex;flex-direction:column;height:100vh;width:100%;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
+  .nt-wrap{display:flex;flex-direction:column;min-height:100vh;width:100%;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
   .nt-hdr{display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:.5rem}
   .nt-hdr h1{font-size:18px;font-weight:900;letter-spacing:-1px}
   .nt-nav{display:flex;gap:.4rem}
@@ -370,7 +370,7 @@
   .nt-stat-lbl{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px}
   .nt-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;min-height:0}
   .nt-challenge-lbl{font-size:13px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem}
-  .nt-fb-wrap{background:var(--sf);border:2px solid var(--bd);border-radius:10px;padding:.5rem;width:100%;max-width:420px;transition:border-color .3s,box-shadow .3s}
+  .nt-fb-wrap{background:var(--sf);border:2px solid var(--bd);border-radius:10px;padding:.5rem;width:100%;max-width:700px;transition:border-color .3s,box-shadow .3s}
   .nt-fb-wrap.nt-success{border-color:#4ECB71;box-shadow:0 0 20px rgba(78,203,113,.25)}
   .nt-detect{text-align:center;margin-top:.3rem}
   .nt-detect-note{font-family:'JetBrains Mono',monospace;font-size:36px;font-weight:700;color:var(--mt);line-height:1;transition:color .15s}
