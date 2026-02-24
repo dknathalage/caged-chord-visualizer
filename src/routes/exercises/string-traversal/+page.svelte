@@ -5,16 +5,11 @@
   import { NOTES } from '$lib/constants/music.js';
   import { AudioManager } from '$lib/audio/AudioManager.js';
   import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, fretForNote, renderFB } from '$lib/music/fretboard.js';
-
-  const TRAV_DIFF = {
-    beginner:    {label:'Beginner',    maxFret:10, naturalsOnly:true,  timer:0,  tip:'Natural notes \u00b7 Frets 0\u201310'},
-    intermediate:{label:'Intermediate',maxFret:14, naturalsOnly:false, timer:0,  tip:'All notes \u00b7 Frets 0\u201314'},
-    advanced:    {label:'Advanced',    maxFret:19, naturalsOnly:false, timer:30, tip:'All notes \u00b7 Frets 0\u201319 \u00b7 30s timer'}
-  };
+  import { LearningEngine } from '$lib/learning/engine.js';
+  import { stringTraversalConfig } from '$lib/learning/configs/stringTraversal.js';
 
   // --- Reactive state ---
   let phase = $state('idle');
-  let diff = $state('beginner');
   let score = $state(0);
   let streak = $state(0);
   let best = $state(0);
@@ -50,6 +45,7 @@
 
   // Audio
   const audio = new AudioManager();
+  let engine = new LearningEngine(stringTraversalConfig);
 
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
@@ -57,16 +53,10 @@
   let showActive = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
 
-  // --- Difficulty ---
-  function setDiff(d) {
-    if (phase !== 'idle') return;
-    diff = d;
-  }
-
   // --- Timer ---
   function startTimer() {
     clearTimer();
-    const d = TRAV_DIFF[diff];
+    const d = engine.getParams();
     if (!d.timer) { timerLeft = 0; return; }
     timerLeft = d.timer;
     timerRef = setInterval(() => {
@@ -110,6 +100,7 @@
   }
 
   function onWrong() {
+    engine.report({note: travNote, frets: travFrets}, false);
     streak = 0; attempts++;
     const pen = Math.min(score, 5);
     score -= pen;
@@ -137,23 +128,7 @@
 
   // --- Traversal picking ---
   function pickTraversal() {
-    const d = TRAV_DIFF[diff], valid = [];
-    for (let ni = 0; ni < 12; ni++) {
-      const n = NOTES[ni];
-      if (d.naturalsOnly && !NT_NATURAL.includes(n)) continue;
-      let ok = true;
-      const frets = [];
-      for (let s = 0; s < 6; s++) {
-        const ff = fretForNote(s, n, d.maxFret);
-        if (!ff.length) { ok = false; break; }
-        frets.push(ff[0]);
-      }
-      if (ok) valid.push({note:n, frets});
-    }
-    let p;
-    do { p = valid[Math.floor(Math.random()*valid.length)]; }
-    while (travNote && p.note === travNote && valid.length > 1);
-    return p;
+    return engine.next();
   }
 
   // --- Show traversal fret reveal ---
@@ -191,6 +166,7 @@
     travIdx++;
     holdStart = 0;
     if (travIdx >= 6) {
+      engine.report({note: travNote, frets: travFrets}, true);
       const pts = scoreCorrect(30, 3);
       msgText = `+${pts} points! All strings complete!`;
       msgErr = false;
@@ -258,6 +234,7 @@
   }
 
   function onSkip() {
+    engine.report({note: travNote, frets: travFrets}, false);
     streak = 0; attempts++;
     score = Math.max(0, score - 10);
     clearTimer();
@@ -268,6 +245,7 @@
   }
 
   function onTimeout() {
+    engine.report({note: travNote, frets: travFrets}, false);
     streak = 0; attempts++;
     score = Math.max(0, score - 10);
     showTravAllPositions();
@@ -286,6 +264,7 @@
 
   function onReset() {
     onStop();
+    engine = new LearningEngine(stringTraversalConfig);
     score = 0; streak = 0; best = 0; correct = 0; attempts = 0;
     travNote = null;
     travFrets = null;
@@ -325,12 +304,6 @@
   </div>
 
   <div class="nt-main">
-    <div class="nt-diff">
-      {#each Object.entries(TRAV_DIFF) as [key, cfg]}
-        <button class="pill{diff === key ? ' on' : ''}" title={cfg.tip} onclick={() => setDiff(key)} disabled={phase !== 'idle'}>{cfg.label}</button>
-      {/each}
-    </div>
-
     <div class="nt-timer">{timerLeft > 0 ? timerLeft : ''}</div>
 
     <div class="nt-trav-section">
@@ -417,7 +390,6 @@
   .nt-btn:hover{border-color:#555;color:var(--tx)}
   .nt-btn.nt-primary{border-color:var(--ac);color:var(--ac);background:rgba(88,166,255,.1)}
   .nt-btn.nt-danger{border-color:#FF6B6B;color:#FF6B6B;background:rgba(255,107,107,.08)}
-  .nt-diff{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}
   .nt-msg{text-align:center;font-size:14px;color:var(--mt);min-height:20px}
   .nt-msg.nt-err{color:#FF6B6B}

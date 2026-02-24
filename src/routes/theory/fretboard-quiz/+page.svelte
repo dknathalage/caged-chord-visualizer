@@ -3,16 +3,11 @@
   import { saveExercise } from '$lib/progress.js';
   import { NOTES } from '$lib/constants/music.js';
   import { NT_NATURAL, NT_STR_NAMES, NT_TUNING, noteAt, fretForNote, shuffle, fbMiniBoard } from '$lib/music/fretboard.js';
-
-  const FB_DIFF = {
-    beginner:     { label: 'Beginner',     maxFret: 5,  naturalsOnly: true,  timer: 0,  tip: 'Frets 0\u20135 \u00b7 Naturals only' },
-    intermediate: { label: 'Intermediate', maxFret: 12, naturalsOnly: false, timer: 15, tip: 'Frets 0\u201312 \u00b7 All notes \u00b7 15s' },
-    advanced:     { label: 'Advanced',     maxFret: 19, naturalsOnly: false, timer: 8,  tip: 'Full neck \u00b7 All notes \u00b7 8s' }
-  };
+  import { LearningEngine } from '$lib/learning/engine.js';
+  import { fretboardQuizConfig } from '$lib/learning/configs/fretboardQuiz.js';
 
   // --- Reactive state ---
   let phase = $state('idle');
-  let diff = $state('beginner');
   let score = $state(0);
   let streak = $state(0);
   let best = $state(0);
@@ -30,8 +25,8 @@
   let msgText = $state('Press Start to begin');
   let msgErr = $state(false);
 
-  let lastStr = -1;
-  let lastFret = -1;
+  let engine = new LearningEngine(fretboardQuizConfig);
+  let curItem = null;
 
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
@@ -40,16 +35,10 @@
   let showStop = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
 
-  // --- Difficulty ---
-  function setDiff(d) {
-    if (phase !== 'idle') return;
-    diff = d;
-  }
-
   // --- Timer ---
   function startTimer() {
     clearTimer();
-    const d = FB_DIFF[diff];
+    const d = engine.getParams();
     if (!d.timer) { timerLeft = 0; return; }
     timerLeft = d.timer;
     timerRef = setInterval(() => {
@@ -65,20 +54,10 @@
 
   // --- Question generation ---
   function genQ() {
-    const d = FB_DIFF[diff];
-    const mode = Math.random() < 0.5 ? 'note' : 'fret';
-
-    let str, fret, note;
-    do {
-      str = Math.floor(Math.random() * 6);
-      fret = Math.floor(Math.random() * (d.maxFret + 1));
-      note = noteAt(str, fret);
-    } while (
-      (d.naturalsOnly && !NT_NATURAL.includes(note)) ||
-      (str === lastStr && fret === lastFret)
-    );
-    lastStr = str;
-    lastFret = fret;
+    const d = engine.getParams();
+    const ei = engine.next();
+    curItem = ei;
+    const str = ei.str, fret = ei.fret, note = ei.note, mode = ei.mode;
 
     if (mode === 'note') {
       const strName = NT_STR_NAMES[str];
@@ -144,6 +123,7 @@
     if (idx === correctIdx) {
       newStates[idx] = 'correct';
       choiceStates = newStates;
+      engine.report(curItem, true);
       correct++;
       attempts++;
       streak++;
@@ -159,6 +139,7 @@
       newStates[idx] = 'wrong';
       newStates[correctIdx] = 'correct';
       choiceStates = newStates;
+      engine.report(curItem, false);
       streak = 0;
       attempts++;
       const pen = Math.min(score, 5);
@@ -175,6 +156,7 @@
     const newStates = [...choiceStates];
     newStates[correctIdx] = 'correct';
     choiceStates = newStates;
+    engine.report(curItem, false);
     streak = 0;
     attempts++;
     const pen = Math.min(score, 5);
@@ -191,6 +173,7 @@
     const newStates = [...choiceStates];
     newStates[correctIdx] = 'correct';
     choiceStates = newStates;
+    engine.report(curItem, false);
     streak = 0;
     attempts++;
     const pen = Math.min(score, 5);
@@ -224,8 +207,8 @@
     best = 0;
     correct = 0;
     attempts = 0;
-    lastStr = -1;
-    lastFret = -1;
+    engine = new LearningEngine(fretboardQuizConfig);
+    curItem = null;
     msgText = 'Press Start to begin';
     msgErr = false;
   }
@@ -252,11 +235,6 @@
     <div class="nt-stat"><div class="nt-stat-val">{best}</div><div class="nt-stat-lbl">Best</div></div>
   </div>
   <div class="nt-main">
-    <div class="nt-diff">
-      {#each Object.entries(FB_DIFF) as [key, cfg]}
-        <button class="pill{diff === key ? ' on' : ''}" title={cfg.tip} onclick={() => setDiff(key)} disabled={phase !== 'idle'}>{cfg.label}</button>
-      {/each}
-    </div>
     <div class="nt-timer">{timerLeft > 0 ? timerLeft : ''}</div>
     <div class="qz-prompt">{@html promptHtml}</div>
     <div class="qz-extra">{@html extraHtml}</div>
@@ -298,7 +276,6 @@
   .nt-stat-val{font-size:20px;font-weight:700;color:var(--ac)}
   .nt-stat-lbl{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px}
   .nt-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;min-height:0}
-  .nt-diff{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}
   .nt-msg{text-align:center;font-size:14px;color:var(--mt);min-height:20px}
   .nt-msg.nt-err{color:#FF6B6B}

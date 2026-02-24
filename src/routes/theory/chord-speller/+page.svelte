@@ -2,12 +2,8 @@
   import { base } from '$app/paths';
   import { saveExercise } from '$lib/progress.js';
   import { NOTES, CHORD_TYPES } from '$lib/constants/music.js';
-
-  const CS_DIFF = {
-    beginner:     { label: 'Beginner',     types: ['maj', 'min'],                                                            timer: 0,  tip: 'Major & Minor triads' },
-    intermediate: { label: 'Intermediate', types: ['maj', 'min', '7', 'maj7', 'm7'],                                         timer: 15, tip: 'Triads + 7ths \u00b7 15s' },
-    advanced:     { label: 'Advanced',     types: ['maj', 'min', '7', 'maj7', 'm7', 'dim', 'aug', 'sus2', 'sus4'],           timer: 8,  tip: 'All chord types \u00b7 8s' }
-  };
+  import { LearningEngine } from '$lib/learning/engine.js';
+  import { chordSpellerConfig } from '$lib/learning/configs/chordSpeller.js';
 
   function csShuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -28,7 +24,6 @@
 
   // --- Reactive state ---
   let phase = $state('idle');
-  let diff = $state('beginner');
   let score = $state(0);
   let streak = $state(0);
   let best = $state(0);
@@ -46,6 +41,9 @@
   let msgText = $state('Press Start to begin');
   let msgErr = $state(false);
 
+  let engine = new LearningEngine(chordSpellerConfig);
+  let curItem = null;
+
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
   let showStart = $derived(phase === 'idle');
@@ -53,16 +51,10 @@
   let showStop = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
 
-  // --- Difficulty ---
-  function setDiff(d) {
-    if (phase !== 'idle') return;
-    diff = d;
-  }
-
   // --- Timer ---
   function startTimer() {
     clearTimer();
-    const d = CS_DIFF[diff];
+    const d = engine.getParams();
     if (!d.timer) { timerLeft = 0; return; }
     timerLeft = d.timer;
     timerRef = setInterval(() => {
@@ -78,15 +70,13 @@
 
   // --- Question generation ---
   function genQ() {
-    const d = CS_DIFF[diff];
-    const allowedTypes = CHORD_TYPES.filter(ct => d.types.includes(ct.id));
-    const mode = Math.random() < 0.5 ? 'spell' : 'name';
-
-    const rootIdx = Math.floor(Math.random() * 12);
-    const root = NOTES[rootIdx];
-    const ct = allowedTypes[Math.floor(Math.random() * allowedTypes.length)];
+    const d = engine.getParams();
+    const ei = engine.next();
+    curItem = ei;
+    const rootIdx = ei.rootIdx, root = ei.root, ct = ei.ct, mode = ei.mode;
     const notes = csSpell(root, ct);
     const chordName = csChordName(root, ct);
+    const allowedTypes = CHORD_TYPES.filter(c => d.types.includes(c.id));
 
     if (mode === 'spell') {
       const correctNotes = notes;
@@ -166,6 +156,7 @@
       score += pts;
       msgText = `+${pts} points!`;
       msgErr = false;
+      engine.report(curItem, true);
       setTimeout(() => { if (phase === 'active') nextQ(); }, 800);
     } else {
       newStates[idx] = 'wrong';
@@ -177,6 +168,7 @@
       score -= pen;
       msgText = pen > 0 ? '\u2212' + pen + ' points' : 'Wrong!';
       msgErr = true;
+      engine.report(curItem, false);
       setTimeout(() => { if (phase === 'active') nextQ(); }, 1200);
     }
   }
@@ -193,6 +185,7 @@
     score -= pen;
     msgText = `Time\u2019s up!` + (pen > 0 ? ` \u2212${pen}` : '');
     msgErr = true;
+    engine.report(curItem, false);
     setTimeout(() => { if (phase === 'active') nextQ(); }, 1500);
   }
 
@@ -209,6 +202,7 @@
     score -= pen;
     msgText = 'Skipped.' + (pen > 0 ? ` \u2212${pen}` : '');
     msgErr = true;
+    engine.report(curItem, false);
     setTimeout(() => { if (phase === 'active') nextQ(); }, 1200);
   }
 
@@ -236,6 +230,8 @@
     best = 0;
     correct = 0;
     attempts = 0;
+    engine = new LearningEngine(chordSpellerConfig);
+    curItem = null;
     msgText = 'Press Start to begin';
     msgErr = false;
   }
@@ -262,11 +258,6 @@
     <div class="nt-stat"><div class="nt-stat-val">{best}</div><div class="nt-stat-lbl">Best</div></div>
   </div>
   <div class="nt-main">
-    <div class="nt-diff">
-      {#each Object.entries(CS_DIFF) as [key, cfg]}
-        <button class="pill{diff === key ? ' on' : ''}" title={cfg.tip} onclick={() => setDiff(key)} disabled={phase !== 'idle'}>{cfg.label}</button>
-      {/each}
-    </div>
     <div class="nt-timer">{timerLeft > 0 ? timerLeft : ''}</div>
     <div class="qz-prompt">{@html promptHtml}</div>
     <div class="qz-extra">{@html extraHtml}</div>
@@ -308,7 +299,6 @@
   .nt-stat-val{font-size:20px;font-weight:700;color:var(--ac)}
   .nt-stat-lbl{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px}
   .nt-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;min-height:0}
-  .nt-diff{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}
   .nt-msg{text-align:center;font-size:14px;color:var(--mt);min-height:20px}
   .nt-msg.nt-err{color:#FF6B6B}

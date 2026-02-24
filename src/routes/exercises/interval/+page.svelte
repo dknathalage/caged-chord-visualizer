@@ -5,16 +5,11 @@
   import { NOTES, INTERVALS } from '$lib/constants/music.js';
   import { AudioManager } from '$lib/audio/AudioManager.js';
   import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, fretForNote, renderFB, fbDims } from '$lib/music/fretboard.js';
-
-  const INTV_DIFF = {
-    beginner:    {label:'Beginner',    maxFret:10, naturalsOnly:true,  timer:0,  intervals:[3,4,5,7,12], tip:'5 common intervals \u00b7 Naturals'},
-    intermediate:{label:'Intermediate',maxFret:14, naturalsOnly:false, timer:0,  intervals:'all', tip:'All 12 intervals'},
-    advanced:    {label:'Advanced',    maxFret:19, naturalsOnly:false, timer:15, intervals:'all', tip:'All intervals \u00b7 15s timer'}
-  };
+  import { LearningEngine } from '$lib/learning/engine.js';
+  import { intervalTrainerConfig } from '$lib/learning/configs/intervalTrainer.js';
 
   // --- Reactive state ---
   let phase = $state('idle');
-  let diff = $state('beginner');
   let recall = $state(false);
   let score = $state(0);
   let streak = $state(0);
@@ -51,18 +46,13 @@
 
   // Audio
   const audio = new AudioManager();
+  let engine = new LearningEngine(intervalTrainerConfig);
 
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
   let showStart = $derived(phase === 'idle');
   let showActive = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
-
-  // --- Difficulty ---
-  function setDiff(d) {
-    if (phase !== 'idle') return;
-    diff = d;
-  }
 
   // --- Mode ---
   function setMode(r) {
@@ -73,7 +63,7 @@
   // --- Timer ---
   function startTimer() {
     clearTimer();
-    const d = INTV_DIFF[diff];
+    const d = engine.getParams();
     if (!d.timer) { timerLeft = 0; return; }
     timerLeft = d.timer;
     timerRef = setInterval(() => {
@@ -123,6 +113,7 @@
     wrongCd = performance.now(); wrongHold = 0;
     msgText = pen > 0 ? '\u2212' + pen + ' points' : 'Wrong!';
     msgErr = true;
+    engine.report({ref: intvRef, interval: intvInterval, targetNote: intvTarget}, false);
   }
 
   function checkHold(isCorrect, onConfirm) {
@@ -144,24 +135,7 @@
 
   // --- Interval picking ---
   function pickInterval() {
-    const d = INTV_DIFF[diff];
-    const allowed = d.intervals === 'all'
-      ? INTERVALS : INTERVALS.filter(iv => d.intervals.includes(iv.semi));
-    const intv = allowed[Math.floor(Math.random() * allowed.length)];
-    const cands = [];
-    for (let s = 0; s < 6; s++)
-      for (let f = 0; f <= d.maxFret; f++) {
-        const n = noteAt(s, f);
-        if (d.naturalsOnly && !NT_NATURAL.includes(n)) continue;
-        const tn = NOTES[(NOTES.indexOf(n) + intv.semi) % 12];
-        if (d.naturalsOnly && !NT_NATURAL.includes(tn)) continue;
-        cands.push({note:n, str:s, fret:f, midi:BASE_MIDI[s]+f});
-      }
-    if (!cands.length) return pickInterval();
-    let ref;
-    do { ref = cands[Math.floor(Math.random()*cands.length)]; }
-    while (intvRef && ref.note===intvRef.note && ref.str===intvRef.str && cands.length>6);
-    return {ref, interval:intv, targetNote:NOTES[(NOTES.indexOf(ref.note)+intv.semi)%12]};
+    return engine.next();
   }
 
   // --- Show interval ---
@@ -190,6 +164,7 @@
 
     checkHold(ok, () => {
       const pts = scoreCorrect(10, 2);
+      engine.report({ref: intvRef, interval: intvInterval, targetNote: intvTarget}, true);
       targetDisplay = intvTarget;
       targetHidden = false;
       fbHtml = renderFB(intvRef, null, true);
@@ -240,6 +215,7 @@
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
     clearTimer();
+    engine.report({ref: intvRef, interval: intvInterval, targetNote: intvTarget}, false);
     targetDisplay = intvTarget;
     targetHidden = false;
     fbHtml = renderFB(intvRef, null, false);
@@ -251,6 +227,7 @@
   function onTimeout() {
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
+    engine.report({ref: intvRef, interval: intvInterval, targetNote: intvTarget}, false);
     targetDisplay = intvTarget;
     targetHidden = false;
     fbHtml = renderFB(intvRef, null, false);
@@ -276,6 +253,7 @@
     showInterval();
     msgText = 'Press Start to begin';
     msgErr = false;
+    engine = new LearningEngine(intervalTrainerConfig);
   }
 
   onDestroy(() => { audio.stop(); clearTimer(); });
@@ -304,12 +282,6 @@
   </div>
 
   <div class="nt-main">
-    <div class="nt-diff">
-      {#each Object.entries(INTV_DIFF) as [key, cfg]}
-        <button class="pill{diff === key ? ' on' : ''}" title={cfg.tip} onclick={() => setDiff(key)} disabled={phase !== 'idle'}>{cfg.label}</button>
-      {/each}
-    </div>
-
     <div class="nt-mode">
       <button class="pill{recall ? '' : ' on'}" title="Shows target note & fretboard" onclick={() => setMode(false)} disabled={phase !== 'idle'}>Guided</button>
       <button class="pill{recall ? ' on' : ''}" title="Hides target — you recall it" onclick={() => setMode(true)} disabled={phase !== 'idle'}>Recall</button>
@@ -386,7 +358,6 @@
   .nt-btn:hover{border-color:#555;color:var(--tx)}
   .nt-btn.nt-primary{border-color:var(--ac);color:var(--ac);background:rgba(88,166,255,.1)}
   .nt-btn.nt-danger{border-color:#FF6B6B;color:#FF6B6B;background:rgba(255,107,107,.08)}
-  .nt-diff{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-mode{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}
   .nt-msg{text-align:center;font-size:14px;color:var(--mt);min-height:20px}

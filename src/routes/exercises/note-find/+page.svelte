@@ -5,16 +5,12 @@
   import { NOTES } from '$lib/constants/music.js';
   import { AudioManager } from '$lib/audio/AudioManager.js';
   import { NT_NATURAL, NT_TUNING, NT_STR_NAMES, BASE_MIDI, noteAt, fretForNote, renderFB, fbDims } from '$lib/music/fretboard.js';
+  import { LearningEngine } from '$lib/learning/engine.js';
+  import { noteFindConfig } from '$lib/learning/configs/noteFind.js';
 
-  const NF_DIFF = {
-    beginner:    {label:'Beginner',    maxFret:5,  naturalsOnly:true,  timer:0,  tip:'Natural notes only \u00b7 Frets 0\u20135'},
-    intermediate:{label:'Intermediate',maxFret:12, naturalsOnly:false, timer:0,  tip:'All 12 notes \u00b7 Frets 0\u201312'},
-    advanced:    {label:'Advanced',    maxFret:19, naturalsOnly:false, timer:10, tip:'All 12 notes \u00b7 Frets 0\u201319 \u00b7 10s timer'}
-  };
 
   // --- Reactive state ---
   let phase = $state('idle');
-  let diff = $state('beginner');
   let recall = $state(false);
   let score = $state(0);
   let streak = $state(0);
@@ -47,18 +43,13 @@
 
   // Audio
   const audio = new AudioManager();
+  let engine = new LearningEngine(noteFindConfig);
 
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
   let showStart = $derived(phase === 'idle');
   let showActive = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
-
-  // --- Difficulty ---
-  function setDiff(d) {
-    if (phase !== 'idle') return;
-    diff = d;
-  }
 
   // --- Mode ---
   function setMode(r) {
@@ -69,7 +60,7 @@
   // --- Timer ---
   function startTimer() {
     clearTimer();
-    const d = NF_DIFF[diff];
+    const d = engine.getParams();
     if (!d.timer) { timerLeft = 0; return; }
     timerLeft = d.timer;
     timerRef = setInterval(() => {
@@ -116,6 +107,7 @@
     streak = 0; attempts++;
     const pen = Math.min(score, 5);
     score -= pen;
+    engine.report(target, false);
     wrongCd = performance.now(); wrongHold = 0;
     msgText = pen > 0 ? '\u2212' + pen + ' points' : 'Wrong!';
     msgErr = true;
@@ -140,17 +132,7 @@
 
   // --- Target picking ---
   function pickTarget() {
-    const d = NF_DIFF[diff], cands = [];
-    for (let s = 0; s < 6; s++)
-      for (let f = 0; f <= d.maxFret; f++) {
-        const n = noteAt(s, f);
-        if (d.naturalsOnly && !NT_NATURAL.includes(n)) continue;
-        cands.push({note:n, str:s, fret:f, midi:BASE_MIDI[s]+f});
-      }
-    let p;
-    do { p = cands[Math.floor(Math.random()*cands.length)]; }
-    while (target && p.note===target.note && p.str===target.str && cands.length>6);
-    return p;
+    return engine.next();
   }
 
   // --- Challenge display ---
@@ -185,6 +167,7 @@
 
     checkHold(ok, () => {
       const pts = scoreCorrect(10, 2);
+      engine.report(target, true);
       fbHtml = renderFB(target, null, true);
       fbSuccess = true;
       fbFlash = true;
@@ -229,6 +212,7 @@
   function onSkip() {
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
+    engine.report(target, false);
     clearTimer();
     if (recall && target) {
       fbHtml = renderFB(target, null, false);
@@ -243,6 +227,7 @@
   function onTimeout() {
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
+    engine.report(target, false);
     if (recall && target) {
       fbHtml = renderFB(target, null, false);
       msgText = `Time's up! Was: Fret ${target.fret}`;
@@ -265,6 +250,7 @@
   function onReset() {
     onStop();
     score = 0; streak = 0; best = 0; correct = 0; attempts = 0;
+    engine = new LearningEngine(noteFindConfig);
     target = null;
     showChallenge();
     msgText = 'Press Start to begin';
@@ -297,12 +283,6 @@
   </div>
 
   <div class="nt-main">
-    <div class="nt-diff">
-      {#each Object.entries(NF_DIFF) as [key, cfg]}
-        <button class="pill{diff === key ? ' on' : ''}" title={cfg.tip} onclick={() => setDiff(key)} disabled={phase !== 'idle'}>{cfg.label}</button>
-      {/each}
-    </div>
-
     <div class="nt-mode">
       <button class="pill{recall ? '' : ' on'}" title="Shows position & fretboard" onclick={() => setMode(false)} disabled={phase !== 'idle'}>Guided</button>
       <button class="pill{recall ? ' on' : ''}" title="Hides position — you recall it" onclick={() => setMode(true)} disabled={phase !== 'idle'}>Recall</button>
@@ -385,7 +365,6 @@
   .nt-btn:hover{border-color:#555;color:var(--tx)}
   .nt-btn.nt-primary{border-color:var(--ac);color:var(--ac);background:rgba(88,166,255,.1)}
   .nt-btn.nt-danger{border-color:#FF6B6B;color:#FF6B6B;background:rgba(255,107,107,.08)}
-  .nt-diff{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-mode{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-challenge-note.nt-recall{font-size:80px}
   .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}

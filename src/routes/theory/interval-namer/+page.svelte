@@ -3,12 +3,8 @@
   import { saveExercise } from '$lib/progress.js';
   import { NOTES, INTERVALS } from '$lib/constants/music.js';
   import { NT_NATURAL } from '$lib/music/fretboard.js';
-
-  const IN_DIFF = {
-    beginner:     { label: 'Beginner',     naturalsOnly: true,  timer: 0,  intervals: [3, 4, 5, 7, 12], tip: '5 common intervals \u00b7 Naturals' },
-    intermediate: { label: 'Intermediate', naturalsOnly: false, timer: 12, intervals: 'all',             tip: 'All 12 intervals \u00b7 12s' },
-    advanced:     { label: 'Advanced',     naturalsOnly: false, timer: 6,  intervals: 'all',             tip: 'All intervals \u00b7 6s' }
-  };
+  import { LearningEngine } from '$lib/learning/engine.js';
+  import { intervalNamerConfig } from '$lib/learning/configs/intervalNamer.js';
 
   function inShuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -20,7 +16,6 @@
 
   // --- Reactive state ---
   let phase = $state('idle');
-  let diff = $state('beginner');
   let score = $state(0);
   let streak = $state(0);
   let best = $state(0);
@@ -38,6 +33,9 @@
   let msgText = $state('Press Start to begin');
   let msgErr = $state(false);
 
+  let engine = new LearningEngine(intervalNamerConfig);
+  let curItem = null;
+
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
   let showStart = $derived(phase === 'idle');
@@ -45,16 +43,10 @@
   let showStop = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
 
-  // --- Difficulty ---
-  function setDiff(d) {
-    if (phase !== 'idle') return;
-    diff = d;
-  }
-
   // --- Timer ---
   function startTimer() {
     clearTimer();
-    const d = IN_DIFF[diff];
+    const d = engine.getParams();
     if (!d.timer) { timerLeft = 0; return; }
     timerLeft = d.timer;
     timerRef = setInterval(() => {
@@ -70,21 +62,12 @@
 
   // --- Question generation ---
   function genQ() {
-    const d = IN_DIFF[diff];
-    const allowed = d.intervals === 'all'
-      ? INTERVALS : INTERVALS.filter(iv => d.intervals.includes(iv.semi));
-    const mode = Math.random() < 0.5 ? 'name' : 'find';
+    const d = engine.getParams();
+    const ei = engine.next();
+    curItem = ei;
+    const root = ei.root, rootIdx = ei.rootIdx, intv = ei.interval, target = ei.target, targetIdx = NOTES.indexOf(ei.target), mode = ei.mode;
 
-    let rootIdx;
-    do { rootIdx = Math.floor(Math.random() * 12); }
-    while (d.naturalsOnly && !NT_NATURAL.includes(NOTES[rootIdx]));
-    const root = NOTES[rootIdx];
-
-    const intv = allowed[Math.floor(Math.random() * allowed.length)];
-    const targetIdx = (rootIdx + intv.semi) % 12;
-    const target = NOTES[targetIdx];
-
-    if (d.naturalsOnly && !NT_NATURAL.includes(target)) return genQ();
+    const allowed = INTERVALS.filter(iv => d.intervals === 'all' || d.intervals.includes(iv.semi));
 
     if (mode === 'name') {
       const correctName = intv.name;
@@ -140,6 +123,7 @@
     if (idx === correctIdx) {
       newStates[idx] = 'correct';
       choiceStates = newStates;
+      engine.report(curItem, true);
       correct++;
       attempts++;
       streak++;
@@ -155,6 +139,7 @@
       newStates[idx] = 'wrong';
       newStates[correctIdx] = 'correct';
       choiceStates = newStates;
+      engine.report(curItem, false);
       streak = 0;
       attempts++;
       const pen = Math.min(score, 5);
@@ -171,6 +156,7 @@
     const newStates = [...choiceStates];
     newStates[correctIdx] = 'correct';
     choiceStates = newStates;
+    engine.report(curItem, false);
     streak = 0;
     attempts++;
     const pen = Math.min(score, 5);
@@ -187,6 +173,7 @@
     const newStates = [...choiceStates];
     newStates[correctIdx] = 'correct';
     choiceStates = newStates;
+    engine.report(curItem, false);
     streak = 0;
     attempts++;
     const pen = Math.min(score, 5);
@@ -220,6 +207,8 @@
     best = 0;
     correct = 0;
     attempts = 0;
+    engine = new LearningEngine(intervalNamerConfig);
+    curItem = null;
     msgText = 'Press Start to begin';
     msgErr = false;
   }
@@ -246,11 +235,6 @@
     <div class="nt-stat"><div class="nt-stat-val">{best}</div><div class="nt-stat-lbl">Best</div></div>
   </div>
   <div class="nt-main">
-    <div class="nt-diff">
-      {#each Object.entries(IN_DIFF) as [key, cfg]}
-        <button class="pill{diff === key ? ' on' : ''}" title={cfg.tip} onclick={() => setDiff(key)} disabled={phase !== 'idle'}>{cfg.label}</button>
-      {/each}
-    </div>
     <div class="nt-timer">{timerLeft > 0 ? timerLeft : ''}</div>
     <div class="qz-prompt">{@html promptHtml}</div>
     <div class="qz-extra">{@html extraHtml}</div>
@@ -292,7 +276,6 @@
   .nt-stat-val{font-size:20px;font-weight:700;color:var(--ac)}
   .nt-stat-lbl{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px}
   .nt-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;min-height:0}
-  .nt-diff{display:flex;gap:.4rem;justify-content:center;margin-bottom:.2rem}
   .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}
   .nt-msg{text-align:center;font-size:14px;color:var(--mt);min-height:20px}
   .nt-msg.nt-err{color:#FF6B6B}
