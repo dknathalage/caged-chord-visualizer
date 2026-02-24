@@ -173,7 +173,8 @@
   // --- Detection ---
   function onDetect(note, cents, hz, semi) {
     const nm = target && note === target.note;
-    const octOk = !recall || !target || Math.abs((semi+69) - target.midi) <= 1;
+    const midiDiff = target ? Math.abs((semi+69) - target.midi) : 0;
+    const octOk = !recall || !target || (midiDiff % 12) <= 1 || (midiDiff % 12) >= 11;
     const ok = nm && octOk;
     showDetected(note, cents, hz, ok);
 

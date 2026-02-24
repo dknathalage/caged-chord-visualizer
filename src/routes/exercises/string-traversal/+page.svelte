@@ -209,7 +209,8 @@
   function onDetect(note, cents, hz, semi) {
     const nm = note === travNote;
     const expMidi = BASE_MIDI[travIdx] + travFrets[travIdx];
-    const midiOk = Math.abs(semi + 69 - expMidi) <= 1;
+    const midiDiff = Math.abs(semi + 69 - expMidi);
+    const midiOk = (midiDiff % 12) <= 1 || (midiDiff % 12) >= 11;
     const ok = nm && midiOk;
     showDetected(note, cents, hz, ok);
 
