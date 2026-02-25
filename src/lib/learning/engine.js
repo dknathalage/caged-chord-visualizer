@@ -26,7 +26,8 @@ const W = [
 ];
 
 // BKT defaults — all remaining exercises are audio/mic-based
-const BKT_AUDIO = { pG: 0.05, pS: 0.10, pT: 0.20 };
+// pS raised to 0.15 to account for mic detection errors (partial strums, latency)
+const BKT_AUDIO = { pG: 0.05, pS: 0.15, pT: 0.20 };
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
@@ -532,7 +533,7 @@ export class LearningEngine {
 
     const pL = rec.pL;
     const mastered = this._isMastered(rec);
-    const exploitation = 1 - pL;
+    const exploitation = Math.min(0.6, 1 - pL); // Cap to prevent low-pL items from dominating
 
     // 2b. Plateau: boost exploration when plateau detected
     const explorationC = this.plateauDetected ? C * 1.5 : C;
@@ -582,15 +583,8 @@ export class LearningEngine {
     // Fatigue bias
     const fatigueBias = this.fatigued ? (pL * 0.3) : 0;
 
-    // 2c. Improved fluency penalty using target time
-    let fluencyPenalty = 0;
-    const targetTime = this._targetTime(rec);
-    if (rec.pL > 0.5 && targetTime > 0 && rec.avgTime > 0) {
-      const ratio = rec.avgTime / targetTime;
-      if (ratio > 1.3) {
-        fluencyPenalty = Math.min(0.4, (ratio - 1.3) * 0.4);
-      }
-    }
+    // Fluency penalty removed — response time reflects mic/processing latency,
+    // not knowledge gaps. Don't re-drill items just because detection was slow.
 
     // 3b. Coverage bonus
     let coverageBonus = 0;
@@ -604,12 +598,25 @@ export class LearningEngine {
       }
     }
 
+    // Stuck penalty: break out of low-pL loops where the same item repeats with poor results
+    let stuckPenalty = 0;
+    const itemKey = rec.key;
+    const recentCount = this.recentKeys.filter(rk => rk === itemKey).length;
+    if (recentCount >= 2 && pL < 0.5) {
+      stuckPenalty = -1.5; // Heavy penalty — force something else
+    } else if (recentCount >= 1 && pL < 0.3 && rec.attempts >= 10) {
+      stuckPenalty = -0.8; // Moderate penalty for chronically stuck items seen recently
+    }
+
     return exploitation + exploration + reviewUrgency + confusionBoost
-      + difficultyMatch + interleave + fatigueBias + fluencyPenalty + coverageBonus;
+      + difficultyMatch + interleave + fatigueBias + coverageBonus + stuckPenalty;
   }
 
   _isMastered(rec) {
-    return rec.pL >= 0.90 && rec.S >= 1 && rec.attempts >= 3;
+    // Mastery = knowledge (pL) + sufficient practice. FSRS stability (S) and
+    // response time deliberately excluded — they cap out at arbitrary values
+    // influenced by mic latency, not actual knowledge.
+    return rec.pL >= 0.80 && rec.attempts >= 3;
   }
 
   // --- Session fatigue detection ---
@@ -667,9 +674,15 @@ export class LearningEngine {
     const key = this.config.itemKey(this.lastItem);
     const rec = this.items.get(key);
     if (!rec || rec.hist.length < 3) return false;
+    // Cooldown: don't micro-drill same item within 8 questions
+    if (rec._lastMicroDrill && (this.qNum - rec._lastMicroDrill) < 8) return false;
     const recent = rec.hist.slice(-5);
     const failures = recent.filter(h => !h).length;
-    return failures >= 3;
+    if (failures >= 3) {
+      rec._lastMicroDrill = this.qNum;
+      return true;
+    }
+    return false;
   }
 
   _buildOverdueQueue() {
