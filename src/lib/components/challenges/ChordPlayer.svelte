@@ -1,10 +1,10 @@
 <script>
   import { NT_STR_NAMES } from '$lib/music/fretboard.js';
-  let { challenge, voiceIdx, voiceDone, fbSuccess, fbFlash } = $props();
+  let { challenge, voiceIdx, voiceDone, fbSuccess, fbFlash, recall = false } = $props();
 </script>
 
 <div class="nt-chord-section">
-  <div class="nt-challenge-lbl">Play the chord</div>
+  <div class="nt-challenge-lbl">{recall ? 'Play from memory' : 'Play the chord'}</div>
   <div class="nt-chord-name">{challenge ? challenge.chordName : '\u2014'}</div>
   <div class="nt-shape-lbl">{challenge ? challenge.shapeName : ''}</div>
 </div>
@@ -18,9 +18,16 @@
 </div>
 
 {#if challenge}
-  <div class="nt-fb-wrap" class:nt-success={fbSuccess} class:nt-flash={fbFlash}>
-    <div>{@html challenge.diagramHtml}</div>
-  </div>
+  {#if recall && !challenge.diagramHtml}
+    <div class="nt-recall-placeholder">
+      <span class="nt-recall-icon">?</span>
+      <span class="nt-recall-text">Play from memory</span>
+    </div>
+  {:else}
+    <div class="nt-fb-wrap" class:nt-success={fbSuccess} class:nt-flash={fbFlash}>
+      <div>{@html challenge.diagramHtml}</div>
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -39,6 +46,9 @@
   .nt-fb-wrap.nt-success{border-color:#4ECB71;box-shadow:0 0 20px rgba(78,203,113,.25)}
   @keyframes nt-glow{0%{box-shadow:0 0 20px rgba(78,203,113,.4)}100%{box-shadow:none}}
   .nt-flash{animation:nt-glow .8s ease-out}
+  .nt-recall-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5rem;padding:2rem;background:var(--sf);border:2px dashed var(--bd);border-radius:10px;width:100%;max-width:700px}
+  .nt-recall-icon{font-family:'JetBrains Mono',monospace;font-size:48px;font-weight:900;color:var(--bd);line-height:1}
+  .nt-recall-text{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--mt);text-transform:uppercase;letter-spacing:1px}
   @media(max-width:600px){
     .nt-chord-name{font-size:32px}
     .nt-trav-dot{width:34px;height:34px}

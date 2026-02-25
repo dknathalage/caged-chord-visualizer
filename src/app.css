@@ -7,4 +7,4 @@ h1{font-size:18px;font-weight:900;letter-spacing:-1px;margin:0;line-height:1.2}
 .pill{padding:.3rem .65rem;border-radius:20px;border:1.5px solid var(--bd);background:var(--sf);color:var(--mt);font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
 .pill:hover{border-color:#555;color:var(--tx)}
 .pill.on{border-color:var(--ac);color:var(--ac);background:rgba(88,166,255,.1);display:inline-flex;align-items:center}
-.ex-layout{display:flex;min-height:100vh;width:100%}
+.ex-layout{display:flex;height:100vh;overflow:hidden;width:100%}

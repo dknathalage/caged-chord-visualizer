@@ -123,21 +123,16 @@ export class LearningEngine {
   next() {
     this.qNum++;
 
-    // Cold start: round-robin types then random (#1d)
-    const typeCount = this.config.getTypeIds ? this.config.getTypeIds().length : 0;
+    // Cold start: round-robin types sorted by difficulty, then random
+    const typeIds = this.config.getTypeIds ? this.config.getTypeIds(this) : [];
+    const typeCount = typeIds.length;
     const dynamicColdStart = Math.max(COLD_START, typeCount);
     if (this.qNum <= dynamicColdStart) {
       let item;
-      // Round-robin through types first
+      // Round-robin through types in difficulty order (no shuffle)
       if (typeCount > 0 && this.qNum <= typeCount) {
         if (!this.coldStartTypes) {
-          const ids = [...this.config.getTypeIds()];
-          // Shuffle
-          for (let i = ids.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [ids[i], ids[j]] = [ids[j], ids[i]];
-          }
-          this.coldStartTypes = ids;
+          this.coldStartTypes = [...typeIds];
         }
         const typeId = this.coldStartTypes[this.qNum - 1];
         item = this.config.genFromType(typeId, this.lastItem, this);
@@ -307,7 +302,8 @@ export class LearningEngine {
 
     // Update theta (student ability)
     const itemDifficulty = this.config.itemDifficulty ? this.config.itemDifficulty(item) : 0.5;
-    this._updateTheta(itemDifficulty, ok);
+    const lr = meta.skipped ? 0.12 : 0.04;
+    this._updateTheta(itemDifficulty, ok, lr);
 
     // 2b. Theta snapshot for plateau detection (every 20 questions)
     if (this.totalAttempts % 20 === 0) {
@@ -398,6 +394,21 @@ export class LearningEngine {
     };
   }
 
+  getItemStats(itemKey) {
+    const rec = this.items.get(itemKey);
+    if (!rec) return null;
+    const now = Date.now();
+    const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / MS_PER_DAY : 0;
+    const R = rec.S > 0 && rec.lastReviewTs > 0 ? fsrsRetrievability(elapsed, rec.S) : 0;
+    const targetTime = this._targetTime(rec);
+    const fluencyRatio = targetTime > 0 && rec.avgTime > 0 ? rec.avgTime / targetTime : 0;
+    return {
+      key: rec.key, pL: rec.pL, S: rec.S, D: rec.D, R, fluencyRatio,
+      attempts: rec.attempts, correct: rec.correct, streak: rec.streak,
+      topConfusion: this._topConfusion(rec), avgTime: rec.avgTime,
+    };
+  }
+
   getConfusions(itemKey) {
     const rec = this.items.get(itemKey);
     if (!rec || rec.confusions.length === 0) return {};
@@ -439,14 +450,13 @@ export class LearningEngine {
 
   // --- Theta (student ability) update ---
 
-  _updateTheta(difficulty, ok) {
+  _updateTheta(difficulty, ok, lr = 0.04) {
     const alpha = 10;
-    const K = 0.04;
     const expected = 1 / (1 + Math.exp(-alpha * (this.theta - difficulty)));
     if (ok) {
-      this.theta += K * (1 - expected);
+      this.theta += lr * (1 - expected);
     } else {
-      this.theta -= K * expected;
+      this.theta -= lr * expected;
     }
     this.theta = clamp(this.theta, 0, 1);
   }

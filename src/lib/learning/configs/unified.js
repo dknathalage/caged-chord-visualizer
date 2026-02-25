@@ -1,5 +1,5 @@
 import { noteFindConfig } from './noteFind.js';
-import { stringTraversalConfig } from './stringTraversal.js';
+
 import { intervalTrainerConfig } from './intervalTrainer.js';
 import { chordToneConfig } from './chordTone.js';
 import { chordPlayerConfig } from './chordPlayer.js';
@@ -9,7 +9,7 @@ import { chordTransitionConfig } from './chordTransition.js';
 
 export const TYPES = [
   { id: 'nf', config: noteFindConfig,            name: 'Note Find' },
-  { id: 'st', config: stringTraversalConfig,     name: 'String Traversal' },
+
   { id: 'iv', config: intervalTrainerConfig,     name: 'Interval' },
   { id: 'ct', config: chordToneConfig,           name: 'Chord Tone' },
   { id: 'cp', config: chordPlayerConfig,         name: 'Chord Player' },
@@ -18,10 +18,14 @@ export const TYPES = [
   { id: 'cx', config: chordTransitionConfig,     name: 'Chord Transition' },
 ];
 
+// Recall constants
+const RECALL_PL_THRESHOLD = 0.7;
+const RECALL_DIFFICULTY_BOOST = 0.2;
+
 // Global difficulty ranges per type — overlapping for smooth transitions
 const TYPE_DIFFICULTY = {
   nf: { base: 0.00, span: 0.40 },
-  st: { base: 0.10, span: 0.35 },
+
   iv: { base: 0.20, span: 0.35 },
   ct: { base: 0.30, span: 0.30 },
   cp: { base: 0.35, span: 0.35 },
@@ -43,6 +47,13 @@ function computeTypeWeights(engine) {
   for (const t of TYPES) {
     const td = TYPE_DIFFICULTY[t.id];
     const typeHi = td.base + td.span;
+
+    // Hard gate: type is completely blocked if theta is too far below its base
+    if (theta < td.base - 0.15) {
+      weights[t.id] = 0;
+      continue;
+    }
+
     // Overlap between [lo, hi] and [td.base, typeHi]
     const overlap = Math.max(0, Math.min(hi, typeHi) - Math.max(lo, td.base));
     let w = overlap / (2 * window);
@@ -88,32 +99,45 @@ export const unifiedConfig = {
     const t = typeById(item._type);
     const td = TYPE_DIFFICULTY[item._type];
     const internalDiff = t.config.itemDifficulty(item._inner);
-    return td.base + internalDiff * td.span;
+    let d = td.base + internalDiff * td.span;
+    if (item._recall) d = Math.min(1, d + RECALL_DIFFICULTY_BOOST);
+    return d;
   },
 
   itemKey(item) {
     const t = typeById(item._type);
-    return item._type + ':' + t.config.itemKey(item._inner);
+    const base = item._type + ':' + t.config.itemKey(item._inner);
+    return item._recall ? base + '|R' : base;
   },
 
   itemClusters(item) {
     const t = typeById(item._type);
     const local = ['type_' + item._type, ...t.config.itemClusters(item._inner)];
     const global = t.config.globalClusters?.(item._inner) || [];
-    return [...local, ...global];
+    const cls = [...local, ...global];
+    if (item._recall) cls.push('recall');
+    return cls;
   },
 
   itemFromKey(key) {
-    const colonIdx = key.indexOf(':');
-    const typeId = key.slice(0, colonIdx);
-    const innerKey = key.slice(colonIdx + 1);
+    const isRecall = key.endsWith('|R');
+    const cleanKey = isRecall ? key.slice(0, -2) : key;
+    const colonIdx = cleanKey.indexOf(':');
+    const typeId = cleanKey.slice(0, colonIdx);
+    const innerKey = cleanKey.slice(colonIdx + 1);
     const t = typeById(typeId);
     const innerItem = t.config.itemFromKey(innerKey);
-    return { _type: typeId, _inner: innerItem };
+    const item = { _type: typeId, _inner: innerItem };
+    if (isRecall) item._recall = true;
+    return item;
   },
 
-  getTypeIds() {
-    return TYPES.map(t => t.id);
+  getTypeIds(engine) {
+    const theta = engine?.theta ?? 0.05;
+    return TYPES
+      .filter(t => theta >= TYPE_DIFFICULTY[t.id].base - 0.15)
+      .sort((a, b) => TYPE_DIFFICULTY[a.id].base - TYPE_DIFFICULTY[b.id].base)
+      .map(t => t.id);
   },
 
   genFromType(typeId, lastItem, engine) {
@@ -121,7 +145,8 @@ export const unifiedConfig = {
     if (!t) return this.genRandom(lastItem, engine);
     const innerLast = (lastItem && lastItem._type === typeId) ? lastItem._inner : null;
     const innerItem = t.config.genRandom(innerLast);
-    return { _type: typeId, _inner: innerItem };
+    const item = { _type: typeId, _inner: innerItem };
+    return this._maybeRecall(item, engine);
   },
 
   genRandom(lastItem, engine) {
@@ -130,7 +155,19 @@ export const unifiedConfig = {
     const t = typeById(typeId);
     const innerLast = (lastItem && lastItem._type === typeId) ? lastItem._inner : null;
     const innerItem = t.config.genRandom(innerLast);
-    return { _type: typeId, _inner: innerItem };
+    const item = { _type: typeId, _inner: innerItem };
+    return this._maybeRecall(item, engine);
+  },
+
+  _maybeRecall(item, engine) {
+    if (!engine || item._recall) return item;
+    // Check if recognition version has pL >= threshold
+    const recogKey = item._type + ':' + typeById(item._type).config.itemKey(item._inner);
+    const rec = engine.items.get(recogKey);
+    if (rec && rec.pL >= RECALL_PL_THRESHOLD && Math.random() < 0.5) {
+      return { ...item, _recall: true };
+    }
+    return item;
   },
 
   genFromCluster(clusterId, lastItem) {

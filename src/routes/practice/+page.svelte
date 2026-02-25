@@ -13,7 +13,7 @@
   import LearningDashboard from '$lib/components/LearningDashboard.svelte';
   import PitchDisplay from '$lib/components/challenges/PitchDisplay.svelte';
   import NoteFind from '$lib/components/challenges/NoteFind.svelte';
-  import StringTraversal from '$lib/components/challenges/StringTraversal.svelte';
+
   import IntervalTrainer from '$lib/components/challenges/IntervalTrainer.svelte';
   import ChordToneFind from '$lib/components/challenges/ChordToneFind.svelte';
   import ChordPlayer from '$lib/components/challenges/ChordPlayer.svelte';
@@ -43,17 +43,6 @@
   let nfFbHtml = $state('');
   let nfFbSuccess = $state(false);
   let nfFbFlash = $state(false);
-
-  // StringTraversal state
-  let stNote = $state(null);
-  let stFrets = $state(null);
-  let stIdx = $state(0);
-  let stDone = $state([false,false,false,false,false,false]);
-  let stFbVisible = $state(false);
-  let stFbHtml = $state('');
-  let stFbSuccess = $state(false);
-  let stFbFlash = $state(false);
-  let stAllPosData = $state([]);
 
   // IntervalTrainer state
   let ivRef = $state(null);
@@ -149,9 +138,106 @@
 
   // --- Derived ---
   let accuracy = $derived(attempts > 0 ? Math.round(correct / attempts * 100) + '%' : '\u2014');
+  let accuracyNum = $derived(attempts > 0 ? correct / attempts : 0);
   let showStart = $derived(phase === 'idle');
   let showActive = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
+
+  // --- Stats-for-nerds: current item stats ---
+  let curItemKey = $derived(curItem ? engine.config.itemKey(curItem) : null);
+  let curItemStats = $derived(curItemKey ? engine.getItemStats(curItemKey) : null);
+
+  // Stats-for-nerds: expand/collapse state
+  let sessionExpanded = $state(false);
+  let engineExpanded = $state(false);
+  let coverageExpanded = $state(false);
+
+  // Session mastery (refreshed after each answer)
+  let sessionMastery = $state(null);
+  function refreshSessionMastery() {
+    sessionMastery = engine.getMastery();
+  }
+
+  // Helper: format values for stats bar
+  function sfnPlColor(pL) {
+    if (pL >= 0.95) return '#4ECB71';
+    if (pL >= 0.5) return '#F0A030';
+    return '#FF6B6B';
+  }
+  function sfnFmtPL(v) { return v.toFixed(2); }
+  function sfnFmtMs(v) { return v > 0 ? (v / 1000).toFixed(1) + 's' : '\u2014'; }
+  function sfnFmtS(v) { return v >= 1 ? v.toFixed(0) + 'd' : v > 0 ? '<1d' : '\u2014'; }
+  function sfnFmtR(v) { return v > 0 ? (v * 100).toFixed(0) + '%' : '\u2014'; }
+  function sfnFluencyColor(r) {
+    if (r <= 0) return 'var(--mt)';
+    if (r < 1.0) return '#4ECB71';
+    if (r <= 1.3) return '#F0A030';
+    return '#FF6B6B';
+  }
+  function sfnFatigueColor(f) {
+    if (!f) return '#4ECB71';
+    return '#FF6B6B';
+  }
+  function sfnFatigueLabel(f) {
+    return f ? 'Fatigued' : 'Fresh';
+  }
+
+  // Coverage heatmap SVG
+  function renderCoverageHeatmap(coverage) {
+    if (!coverage) return '';
+    const zones = ['zone_0', 'zone_3', 'zone_5', 'zone_7', 'zone_9', 'zone_12'];
+    const zoneLabels = ['0', '3', '5', '7', '9', '12+'];
+    const cellW = 28, cellH = 18, padL = 24, padT = 16, gap = 2;
+    const w = padL + zones.length * (cellW + gap);
+    const h = padT + 6 * (cellH + gap);
+    let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
+    // Zone labels
+    for (let z = 0; z < zones.length; z++) {
+      svg += `<text x="${padL + z * (cellW + gap) + cellW / 2}" y="10" text-anchor="middle" fill="var(--mt)" font-size="8" font-family="JetBrains Mono">${zoneLabels[z]}</text>`;
+    }
+    // String labels
+    const strNames = ['e','B','G','D','A','E'];
+    for (let s = 0; s < 6; s++) {
+      svg += `<text x="${padL - 6}" y="${padT + s * (cellH + gap) + cellH / 2 + 3}" text-anchor="end" fill="var(--mt)" font-size="8" font-family="JetBrains Mono">${strNames[s]}</text>`;
+    }
+    // Cells
+    for (let s = 0; s < 6; s++) {
+      for (let z = 0; z < zones.length; z++) {
+        const cellKey = `str_${s}:${zones[z]}`;
+        const cell = coverage[cellKey] || { count: 0, avgPL: 0 };
+        const opacity = cell.count === 0 ? 0.08 : Math.min(1, 0.3 + cell.count * 0.15);
+        let fill;
+        if (cell.count === 0) fill = '#30363D';
+        else if (cell.avgPL >= 0.8) fill = '#4ECB71';
+        else if (cell.avgPL >= 0.4) fill = '#F0A030';
+        else fill = '#FF6B6B';
+        const x = padL + z * (cellW + gap);
+        const y = padT + s * (cellH + gap);
+        svg += `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="3" fill="${fill}" opacity="${opacity}"/>`;
+        if (cell.count > 0) {
+          svg += `<text x="${x + cellW / 2}" y="${y + cellH / 2 + 3}" text-anchor="middle" fill="#fff" font-size="7" font-family="JetBrains Mono" opacity="0.9">${Math.round(cell.avgPL * 100)}</text>`;
+        }
+      }
+    }
+    svg += '</svg>';
+    return svg;
+  }
+
+  // Sparkline for theta history
+  function renderThetaSparkline(history) {
+    if (!history || history.length < 2) return '';
+    const w = 80, h = 20, pad = 2;
+    const thetas = history.map(h => h.theta);
+    const min = Math.min(...thetas);
+    const max = Math.max(...thetas);
+    const range = max - min || 0.01;
+    const pts = thetas.map((t, i) => {
+      const x = pad + (i / (thetas.length - 1)) * (w - pad * 2);
+      const y = h - pad - ((t - min) / range) * (h - pad * 2);
+      return `${x},${y}`;
+    }).join(' ');
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><polyline points="${pts}" fill="none" stroke="var(--ac)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
 
   // --- Detected display ---
   function showDetected(note, cents, hz, isCorrect) {
@@ -174,6 +260,7 @@
     if (streak === 5) pts += 20;
     if (streak === 10) pts += 50;
     score += pts;
+    refreshSessionMastery();
     return pts;
   }
 
@@ -185,6 +272,7 @@
     wrongCd = performance.now(); wrongHold = 0;
     msgText = pen > 0 ? '\u2212' + pen + ' points' : 'Wrong!';
     msgErr = true;
+    refreshSessionMastery();
   }
 
   function checkHold(isCorrect, onConfirm) {
@@ -239,12 +327,12 @@
     const item = engine.next();
     curItem = item;
     challengeType = item._type;
+    recall = !!item._recall;
     const inner = item._inner;
     qStartTime = performance.now();
 
     switch (challengeType) {
       case 'nf': prepareNoteFind(inner); break;
-      case 'st': prepareStringTraversal(inner); break;
       case 'iv': prepareInterval(inner); break;
       case 'ct': prepareChordTone(inner); break;
       case 'cp': prepareChordPlayer(inner); break;
@@ -266,16 +354,6 @@
     }
     nfFbSuccess = false; nfFbFlash = false;
     msgText = 'Listening...'; msgErr = false;
-  }
-
-  function prepareStringTraversal(inner) {
-    stNote = inner.note;
-    stFrets = inner.frets;
-    stIdx = 0;
-    stDone = [false,false,false,false,false,false];
-    stFbVisible = false; stFbHtml = ''; stAllPosData = [];
-    stFbSuccess = false; stFbFlash = false;
-    msgText = `Play ${inner.note} on ${NT_STR_NAMES[0]}`; msgErr = false;
   }
 
   function prepareInterval(inner) {
@@ -323,7 +401,7 @@
     const color = STD_COLORS[sh.id] || '#58A6FF';
     const dHtml = renderDiagram(r, color);
     const chordName = root + (ct.sym || '');
-    cpChallenge = { root, chordType: ct, shape: sh, resolved: r, sortedVoices, diagramHtml: dHtml, chordName, color, shapeName: sh.label };
+    cpChallenge = { root, chordType: ct, shape: sh, resolved: r, sortedVoices, diagramHtml: recall ? '' : dHtml, chordName, color, shapeName: sh.label };
     cpVoiceIdx = 0;
     cpVoiceDone = sortedVoices.map(() => false);
     cpFbSuccess = false; cpFbFlash = false;
@@ -344,7 +422,7 @@
     }
     srChallenge = { root, scale, seq, startFret };
     srNoteIdx = 0;
-    srFbVisible = true;
+    srFbVisible = !recall;
     srFbSuccess = false; srFbFlash = false;
     srFbHtml = renderSeqFB(seq, 0, startFret);
     const t = seq[0];
@@ -364,7 +442,7 @@
     }
     mtChallenge = { root, mode, seq, startFret };
     mtNoteIdx = 0;
-    mtFbVisible = true;
+    mtFbVisible = !recall;
     mtFbSuccess = false; mtFbFlash = false;
     mtFbHtml = renderSeqFB(seq, 0, startFret);
     const t = seq[0];
@@ -383,7 +461,7 @@
       if (r.voices.length < 3) return null;
       const sortedVoices = [...r.voices].sort((a, b) => a.str - b.str);
       const color = STD_COLORS[sh.id] || '#58A6FF';
-      const dHtml = renderDiagram(r, color);
+      const dHtml = recall ? '' : renderDiagram(r, color);
       const chordName = root + (ct.sym || '');
       return { root, chordType: ct, shape: sh, resolved: r, sortedVoices, diagramHtml: dHtml, chordName, color, shapeName: sh.label };
     }
@@ -407,7 +485,6 @@
     lastDetected = note || '';
     switch (challengeType) {
       case 'nf': detectNoteFind(note, cents, hz, semi); break;
-      case 'st': detectStringTraversal(note, cents, hz, semi); break;
       case 'iv': detectInterval(note, cents, hz, semi); break;
       case 'ct': detectChordTone(note, cents, hz, semi); break;
       case 'cp': detectChordPlayer(note, cents, hz, semi); break;
@@ -432,31 +509,6 @@
       nfFbSuccess = true; nfFbFlash = true;
       msgText = `+${pts} points!`; msgErr = false;
       setTimeout(() => { nfFbSuccess = false; nfFbFlash = false; if (phase === 'success') nextChallenge(); }, recall ? 1200 : 800);
-    });
-  }
-
-  function detectStringTraversal(note, cents, hz, semi) {
-    const nm = note === stNote;
-    const expMidi = BASE_MIDI[stIdx] + stFrets[stIdx];
-    const midiDiff = Math.abs(semi + 69 - expMidi);
-    const midiOk = (midiDiff % 12) <= 1 || (midiDiff % 12) >= 11;
-    const ok = nm && midiOk;
-    showDetected(note, cents, hz, ok);
-    if (nm && !midiOk && phase === 'listening') { msgText = `Right note, play on ${NT_STR_NAMES[stIdx]} string!`; msgErr = true; }
-    checkHold(ok, () => {
-      stDone[stIdx] = true; stDone = [...stDone];
-      const tgt = {note: stNote, str: stIdx, fret: stFrets[stIdx], midi: BASE_MIDI[stIdx] + stFrets[stIdx]};
-      stFbVisible = true; stFbHtml = renderFB(tgt, null, true); stFbSuccess = true; stFbFlash = true;
-      setTimeout(() => { stFbSuccess = false; stFbFlash = false; if (phase === 'listening') stFbVisible = false; }, 600);
-      stIdx++; holdStart = 0;
-      if (stIdx >= 6) {
-        engine.report(curItem, true, performance.now() - qStartTime);
-        const pts = scoreCorrect(30, 3);
-        msgText = `+${pts} points! All strings complete!`; msgErr = false;
-        setTimeout(() => { stFbSuccess = false; stFbFlash = false; if (phase === 'success') nextChallenge(); }, 1200);
-      } else {
-        msgText = `Now play ${stNote} on ${NT_STR_NAMES[stIdx]}`; msgErr = false;
-      }
     });
   }
 
@@ -609,6 +661,7 @@
 
   async function onStart() {
     refreshMastery();
+    refreshSessionMastery();
     const ok = await audio.start();
     if (!ok) { msgText = 'Mic access denied.'; msgErr = true; return; }
     phase = 'listening';
@@ -617,7 +670,7 @@
   }
 
   function onSkip() {
-    engine.report(curItem, false, undefined, { detected: lastDetected });
+    engine.report(curItem, false, undefined, { detected: lastDetected, skipped: true });
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
     msgText = 'Skipped'; msgErr = true;
@@ -683,13 +736,102 @@
       </div>
     </div>
   {:else}
-    <!-- Active: stats bar -->
-    <div class="nt-stats">
-      <div class="nt-stat"><div class="nt-stat-val">{score}</div><div class="nt-stat-lbl">Score</div></div>
-      <div class="nt-stat"><div class="nt-stat-val">{streak}</div><div class="nt-stat-lbl">Streak</div></div>
-      <div class="nt-stat"><div class="nt-stat-val">{accuracy}</div><div class="nt-stat-lbl">Accuracy</div></div>
-      <div class="nt-stat"><div class="nt-stat-val">{best}</div><div class="nt-stat-lbl">Best</div></div>
+    <!-- Active: stats-for-nerds bar -->
+    <div class="sfn-bar">
+      <!-- Session group -->
+      <button class="sfn-group" class:sfn-active={sessionExpanded} onclick={() => { sessionExpanded = !sessionExpanded; engineExpanded = false; coverageExpanded = false; }}>
+        <span class="sfn-group-label">SESSION</span>
+        <span class="sfn-metric"><span class="sfn-val">{score}</span><span class="sfn-key">Score</span></span>
+        <span class="sfn-sep">&middot;</span>
+        <span class="sfn-metric"><span class="sfn-val">{streak}</span><span class="sfn-key">Streak</span>{#if best > 0}<span class="sfn-sub">({best})</span>{/if}</span>
+        <span class="sfn-sep">&middot;</span>
+        <span class="sfn-metric"><span class="sfn-val">{accuracy}</span><span class="sfn-key">Acc</span></span>
+      </button>
+
+      <!-- Engine group -->
+      <button class="sfn-group" class:sfn-active={engineExpanded} onclick={() => { engineExpanded = !engineExpanded; sessionExpanded = false; coverageExpanded = false; }}>
+        <span class="sfn-group-label">ENGINE</span>
+        <span class="sfn-metric"><span class="sfn-val">{engine.theta.toFixed(2)}</span><span class="sfn-key">&theta;</span></span>
+        <span class="sfn-sep">&middot;</span>
+        <span class="sfn-metric">
+          <span class="sfn-val" style="color:{curItemStats ? sfnPlColor(curItemStats.pL) : 'var(--mt)'}">
+            {curItemStats ? sfnFmtPL(curItemStats.pL) : '\u2014'}
+          </span>
+          <span class="sfn-key">pL</span>
+        </span>
+      </button>
+
+      <!-- Coverage button -->
+      <button class="sfn-group sfn-coverage-btn" class:sfn-active={coverageExpanded} onclick={() => { coverageExpanded = !coverageExpanded; sessionExpanded = false; engineExpanded = false; }} title="Fretboard Coverage">
+        <span class="sfn-grid-icon">&#9638;</span>
+      </button>
     </div>
+
+    <!-- Expandable panels -->
+    {#if sessionExpanded}
+      <div class="sfn-panel">
+        <div class="sfn-panel-row">
+          <div class="sfn-panel-metric"><span class="sfn-panel-label">Questions</span><span class="sfn-panel-value">{engine.qNum}</span></div>
+          <div class="sfn-panel-metric"><span class="sfn-panel-label">Avg Time</span><span class="sfn-panel-value">{sessionMastery ? sfnFmtMs(sessionMastery.overall.avgResponseTime) : '\u2014'}</span></div>
+          <div class="sfn-panel-metric">
+            <span class="sfn-panel-label">Fatigue</span>
+            <span class="sfn-panel-value" style="color:{sfnFatigueColor(engine.fatigued)}">
+              <span class="sfn-dot" style="background:{sfnFatigueColor(engine.fatigued)}"></span>
+              {sfnFatigueLabel(engine.fatigued)}
+            </span>
+          </div>
+          <div class="sfn-panel-metric"><span class="sfn-panel-label">Streak Bonus</span><span class="sfn-panel-value">{streak >= 10 ? '+50' : streak >= 5 ? '+20' : '+' + streak * 2}</span></div>
+        </div>
+      </div>
+    {/if}
+
+    {#if engineExpanded}
+      <div class="sfn-panel">
+        <div class="sfn-panel-row">
+          <div class="sfn-panel-metric sfn-wide">
+            <span class="sfn-panel-label">&theta; History</span>
+            <span class="sfn-panel-value sfn-sparkline">{@html renderThetaSparkline(engine.thetaHistory)}<span class="sfn-theta-val">{engine.theta.toFixed(3)}</span></span>
+          </div>
+        </div>
+        {#if curItemStats}
+          <div class="sfn-panel-divider"></div>
+          <div class="sfn-panel-subtitle">Current Item: {curItemStats.key.length > 24 ? curItemStats.key.slice(0, 24) + '\u2026' : curItemStats.key}</div>
+          <div class="sfn-panel-row">
+            <div class="sfn-panel-metric"><span class="sfn-panel-label">pL</span><span class="sfn-panel-value" style="color:{sfnPlColor(curItemStats.pL)}">{sfnFmtPL(curItemStats.pL)}</span></div>
+            <div class="sfn-panel-metric"><span class="sfn-panel-label">S</span><span class="sfn-panel-value">{sfnFmtS(curItemStats.S)}</span></div>
+            <div class="sfn-panel-metric"><span class="sfn-panel-label">D</span><span class="sfn-panel-value">{curItemStats.D.toFixed(1)}</span></div>
+            <div class="sfn-panel-metric"><span class="sfn-panel-label">R</span><span class="sfn-panel-value">{sfnFmtR(curItemStats.R)}</span></div>
+          </div>
+          <div class="sfn-panel-row">
+            <div class="sfn-panel-metric">
+              <span class="sfn-panel-label">Fluency</span>
+              <span class="sfn-panel-value">
+                <span class="sfn-fluency-bar"><span class="sfn-fluency-fill" style="width:{curItemStats.fluencyRatio > 0 ? Math.min(100, (1 / Math.max(0.3, curItemStats.fluencyRatio)) * 100) : 0}%;background:{sfnFluencyColor(curItemStats.fluencyRatio)}"></span></span>
+                <span style="color:{sfnFluencyColor(curItemStats.fluencyRatio)}">{curItemStats.fluencyRatio > 0 ? curItemStats.fluencyRatio.toFixed(1) + 'x' : '\u2014'}</span>
+              </span>
+            </div>
+            <div class="sfn-panel-metric"><span class="sfn-panel-label">Attempts</span><span class="sfn-panel-value">{curItemStats.attempts}</span></div>
+            <div class="sfn-panel-metric"><span class="sfn-panel-label">Streak</span><span class="sfn-panel-value">{curItemStats.streak}</span></div>
+            {#if curItemStats.topConfusion}
+              <div class="sfn-panel-metric"><span class="sfn-panel-label">Confused</span><span class="sfn-panel-value sfn-confusion">&rarr;{curItemStats.topConfusion}</span></div>
+            {/if}
+          </div>
+        {:else}
+          <div class="sfn-panel-empty">No item data yet</div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if coverageExpanded}
+      <div class="sfn-panel sfn-coverage-panel">
+        <div class="sfn-panel-subtitle">Fretboard Coverage</div>
+        {#if sessionMastery}
+          <div class="sfn-coverage-grid">{@html renderCoverageHeatmap(sessionMastery.coverage)}</div>
+        {:else}
+          <div class="sfn-panel-empty">No coverage data yet</div>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   <div class="nt-main">
@@ -700,20 +842,18 @@
       <!-- Challenge display: switch on type -->
       {#if challengeType === 'nf'}
         <NoteFind target={nfTarget} fbHtml={nfFbHtml} fbSuccess={nfFbSuccess} fbFlash={nfFbFlash} {recall} />
-      {:else if challengeType === 'st'}
-        <StringTraversal travNote={stNote} travIdx={stIdx} travDone={stDone} fbVisible={stFbVisible} fbHtml={stFbHtml} fbSuccess={stFbSuccess} fbFlash={stFbFlash} allPosData={stAllPosData} />
       {:else if challengeType === 'iv'}
         <IntervalTrainer ref={ivRef} interval={ivInterval} targetDisplay={ivTargetDisplay} targetHidden={ivTargetHidden} fbHtml={ivFbHtml} fbSuccess={ivFbSuccess} fbFlash={ivFbFlash} />
       {:else if challengeType === 'ct'}
         <ChordToneFind chordName={ctChordName} toneLabel={ctToneLabel} targetDisplay={ctTargetDisplay} targetHidden={ctTargetHidden} fbHtml={ctFbHtml} fbSuccess={ctFbSuccess} fbFlash={ctFbFlash} />
       {:else if challengeType === 'cp'}
-        <ChordPlayer challenge={cpChallenge} voiceIdx={cpVoiceIdx} voiceDone={cpVoiceDone} fbSuccess={cpFbSuccess} fbFlash={cpFbFlash} />
+        <ChordPlayer challenge={cpChallenge} voiceIdx={cpVoiceIdx} voiceDone={cpVoiceDone} fbSuccess={cpFbSuccess} fbFlash={cpFbFlash} {recall} />
       {:else if challengeType === 'sr'}
         <ScaleRunner challenge={srChallenge} noteIdx={srNoteIdx} fbHtml={srFbHtml} fbVisible={srFbVisible} fbSuccess={srFbSuccess} fbFlash={srFbFlash} />
       {:else if challengeType === 'mt'}
         <ModeTrainer challenge={mtChallenge} noteIdx={mtNoteIdx} fbHtml={mtFbHtml} fbVisible={mtFbVisible} fbSuccess={mtFbSuccess} fbFlash={mtFbFlash} />
       {:else if challengeType === 'cx'}
-        <ChordTransition fromChallenge={cxFromChallenge} toChallenge={cxToChallenge} phase={cxPhase} voiceIdx={cxVoiceIdx} voiceDone={cxVoiceDone} fbSuccess={cxFbSuccess} fbFlash={cxFbFlash} />
+        <ChordTransition fromChallenge={cxFromChallenge} toChallenge={cxToChallenge} phase={cxPhase} voiceIdx={cxVoiceIdx} voiceDone={cxVoiceDone} fbSuccess={cxFbSuccess} fbFlash={cxFbFlash} {recall} />
       {/if}
 
       <PitchDisplay {detectedNote} {detectedClass} {centsLbl} {centsLeft} {hzText} />
@@ -739,15 +879,45 @@
 </div>
 
 <style>
-  .nt-wrap{display:flex;flex-direction:column;min-height:100vh;flex:1;min-width:0;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
+  .nt-wrap{display:flex;flex-direction:column;height:100%;overflow-y:auto;flex:1;min-width:0;padding:.5rem 1rem;gap:.5rem;background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif}
   .nt-hdr{display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:.5rem}
   .nt-hdr h1{font-size:18px;font-weight:900;letter-spacing:-1px}
   .nt-nav{display:flex;gap:.4rem}
   .nt-nav a{text-decoration:none}
-  .nt-stats{display:flex;gap:1rem;background:var(--sf);border:1px solid var(--bd);border-radius:10px;padding:.4rem .8rem;flex-wrap:wrap;justify-content:center;flex-shrink:0}
-  .nt-stat{text-align:center;font-family:'JetBrains Mono',monospace}
-  .nt-stat-val{font-size:20px;font-weight:700;color:var(--ac)}
-  .nt-stat-lbl{font-size:11px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px}
+  /* Stats-for-nerds bar */
+  .sfn-bar{display:flex;gap:4px;flex-wrap:wrap;justify-content:center;flex-shrink:0}
+  .sfn-group{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;cursor:pointer;transition:all .15s;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--tx)}
+  .sfn-group:hover{border-color:#555;background:var(--sf2)}
+  .sfn-group.sfn-active{border-color:var(--ac);background:rgba(88,166,255,.06)}
+  .sfn-group-label{font-size:8px;font-weight:700;color:var(--mt);text-transform:uppercase;letter-spacing:1px;margin-right:2px}
+  .sfn-metric{display:inline-flex;align-items:baseline;gap:3px}
+  .sfn-val{font-weight:700;color:var(--ac);font-size:13px}
+  .sfn-key{font-size:9px;color:var(--mt);text-transform:uppercase}
+  .sfn-sub{font-size:9px;color:var(--mt);margin-left:1px}
+  .sfn-sep{color:var(--bd);font-size:10px}
+  .sfn-coverage-btn{padding:4px 8px}
+  .sfn-grid-icon{font-size:16px;color:var(--mt);line-height:1}
+  .sfn-group.sfn-active .sfn-grid-icon{color:var(--ac)}
+
+  /* Expandable panels */
+  .sfn-panel{background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;flex-shrink:0;animation:sfn-in .15s ease-out}
+  @keyframes sfn-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .sfn-panel-row{display:flex;gap:12px;flex-wrap:wrap}
+  .sfn-panel-metric{display:flex;flex-direction:column;gap:1px;min-width:60px}
+  .sfn-panel-metric.sfn-wide{flex:1;min-width:150px}
+  .sfn-panel-label{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .sfn-panel-value{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--tx);display:flex;align-items:center;gap:4px}
+  .sfn-panel-divider{height:1px;background:var(--bd);margin:4px 0}
+  .sfn-panel-subtitle{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
+  .sfn-panel-empty{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--mt);text-align:center;padding:6px}
+  .sfn-dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
+  .sfn-sparkline{display:flex;align-items:center;gap:6px}
+  .sfn-theta-val{font-size:12px;color:var(--ac)}
+  .sfn-confusion{color:#FF6B6B;font-size:11px}
+  .sfn-fluency-bar{width:40px;height:4px;background:var(--sf2);border-radius:2px;overflow:hidden;display:inline-block}
+  .sfn-fluency-fill{height:100%;border-radius:2px;transition:width .3s}
+  .sfn-coverage-panel{text-align:center}
+  .sfn-coverage-grid{display:flex;justify-content:center}
   .nt-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.8rem;min-height:0}
   .nt-controls{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:center;flex-shrink:0;padding-bottom:.5rem}
   .nt-btn{padding:.4rem .9rem;border-radius:20px;border:1.5px solid var(--bd);background:var(--sf);color:var(--mt);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
@@ -773,7 +943,8 @@
   @media(max-width:600px){
     .nt-wrap{padding:.5rem;gap:.4rem}
     .nt-hdr h1{font-size:15px}
-    .nt-stat-val{font-size:16px}
+    .sfn-val{font-size:11px}
+    .sfn-panel-value{font-size:11px}
     .nt-btn{font-size:12px;padding:.3rem .6rem}
     .type-bar-name{width:80px;font-size:10px}
   }
