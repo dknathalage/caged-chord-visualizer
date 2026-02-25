@@ -15,7 +15,7 @@
   import NoteFind from '$lib/components/challenges/NoteFind.svelte';
 
   import IntervalTrainer from '$lib/components/challenges/IntervalTrainer.svelte';
-  import ChordToneFind from '$lib/components/challenges/ChordToneFind.svelte';
+
   import ChordPlayer from '$lib/components/challenges/ChordPlayer.svelte';
   import ScaleRunner from '$lib/components/challenges/ScaleRunner.svelte';
   import ModeTrainer from '$lib/components/challenges/ModeTrainer.svelte';
@@ -53,16 +53,6 @@
   let ivFbHtml = $state('');
   let ivFbSuccess = $state(false);
   let ivFbFlash = $state(false);
-
-  // ChordToneFind state
-  let ctChallenge = $state(null);
-  let ctChordName = $state('\u2014');
-  let ctToneLabel = $state('');
-  let ctTargetDisplay = $state('\u2014');
-  let ctTargetHidden = $state(false);
-  let ctFbHtml = $state('');
-  let ctFbSuccess = $state(false);
-  let ctFbFlash = $state(false);
 
   // ChordPlayer state
   let cpChallenge = $state(null);
@@ -334,7 +324,6 @@
     switch (challengeType) {
       case 'nf': prepareNoteFind(inner); break;
       case 'iv': prepareInterval(inner); break;
-      case 'ct': prepareChordTone(inner); break;
       case 'cp': prepareChordPlayer(inner); break;
       case 'sr': prepareScaleRunner(inner); break;
       case 'mt': prepareModeTrainer(inner); break;
@@ -369,23 +358,6 @@
       ivFbHtml = renderFB(inner.ref, null, false);
     }
     ivFbSuccess = false; ivFbFlash = false;
-    msgText = 'Listening...'; msgErr = false;
-  }
-
-  function prepareChordTone(inner) {
-    const ct = CHORD_TYPES.find(c => c.id === inner.ctId);
-    ctChallenge = { root: inner.root, chordType: ct, toneLabel: inner.toneLabel, targetNote: inner.targetNote, pos: inner.pos };
-    ctChordName = inner.root + (ct?.sym || '');
-    ctToneLabel = inner.toneLabel;
-    if (recall) {
-      ctTargetDisplay = '?'; ctTargetHidden = true;
-      const _d = fbDims();
-      ctFbHtml = `<svg viewBox="0 0 ${_d.W} ${_d.H}" xmlns="http://www.w3.org/2000/svg"><text x="${_d.W/2}" y="${_d.H/2}" text-anchor="middle" dominant-baseline="central" fill="#222" font-size="60" font-family="Outfit" font-weight="900">?</text></svg>`;
-    } else {
-      ctTargetDisplay = inner.targetNote; ctTargetHidden = false;
-      ctFbHtml = renderFB(inner.pos, null, false);
-    }
-    ctFbSuccess = false; ctFbFlash = false;
     msgText = 'Listening...'; msgErr = false;
   }
 
@@ -486,7 +458,6 @@
     switch (challengeType) {
       case 'nf': detectNoteFind(note, cents, hz, semi); break;
       case 'iv': detectInterval(note, cents, hz, semi); break;
-      case 'ct': detectChordTone(note, cents, hz, semi); break;
       case 'cp': detectChordPlayer(note, cents, hz, semi); break;
       case 'sr': detectScaleRunner(note, cents, hz, semi); break;
       case 'mt': detectModeTrainer(note, cents, hz, semi); break;
@@ -523,20 +494,6 @@
       ivFbSuccess = true; ivFbFlash = true;
       msgText = `+${pts} points!`; msgErr = false;
       setTimeout(() => { ivFbSuccess = false; ivFbFlash = false; if (phase === 'success') nextChallenge(); }, recall ? 1200 : 800);
-    });
-  }
-
-  function detectChordTone(note, cents, hz, semi) {
-    const ok = ctChallenge && note === ctChallenge.targetNote;
-    showDetected(note, cents, hz, ok);
-    checkHold(ok, () => {
-      const pts = scoreCorrect(10, 2);
-      engine.report(curItem, true, performance.now() - qStartTime);
-      ctTargetDisplay = ctChallenge.targetNote; ctTargetHidden = false;
-      ctFbHtml = renderFB(ctChallenge.pos, null, true);
-      ctFbSuccess = true; ctFbFlash = true;
-      msgText = `+${pts} points!`; msgErr = false;
-      setTimeout(() => { ctFbSuccess = false; ctFbFlash = false; if (phase === 'success') nextChallenge(); }, recall ? 1200 : 800);
     });
   }
 
@@ -844,8 +801,6 @@
         <NoteFind target={nfTarget} fbHtml={nfFbHtml} fbSuccess={nfFbSuccess} fbFlash={nfFbFlash} {recall} />
       {:else if challengeType === 'iv'}
         <IntervalTrainer ref={ivRef} interval={ivInterval} targetDisplay={ivTargetDisplay} targetHidden={ivTargetHidden} fbHtml={ivFbHtml} fbSuccess={ivFbSuccess} fbFlash={ivFbFlash} />
-      {:else if challengeType === 'ct'}
-        <ChordToneFind chordName={ctChordName} toneLabel={ctToneLabel} targetDisplay={ctTargetDisplay} targetHidden={ctTargetHidden} fbHtml={ctFbHtml} fbSuccess={ctFbSuccess} fbFlash={ctFbFlash} />
       {:else if challengeType === 'cp'}
         <ChordPlayer challenge={cpChallenge} voiceIdx={cpVoiceIdx} voiceDone={cpVoiceDone} fbSuccess={cpFbSuccess} fbFlash={cpFbFlash} {recall} />
       {:else if challengeType === 'sr'}

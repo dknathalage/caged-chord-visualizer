@@ -24,7 +24,7 @@
     nf: ['str_0','str_1','str_2','str_3','str_4','str_5','zone_0','zone_3','zone_5','zone_7','zone_9','zone_12','natural','accidental'],
 
     iv: ['m2','M2','m3','M3','P4','TT','P5','m6','M6','m7','M7','P8'],
-    ct: ['R','3','5','b3','b7','7'],
+
     cp: ['C_shape','A_shape','G_shape','E_shape','D_shape'],
     sr: ['major_pent','minor_pent','major','minor'],
     mt: ['ionian','dorian','phrygian','lydian','mixolydian','aeolian','locrian'],

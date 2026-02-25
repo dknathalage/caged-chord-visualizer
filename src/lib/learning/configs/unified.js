@@ -1,7 +1,7 @@
 import { noteFindConfig } from './noteFind.js';
 
 import { intervalTrainerConfig } from './intervalTrainer.js';
-import { chordToneConfig } from './chordTone.js';
+
 import { chordPlayerConfig } from './chordPlayer.js';
 import { scaleRunnerConfig } from './scaleRunner.js';
 import { modeTrainerConfig } from './modeTrainer.js';
@@ -11,7 +11,7 @@ export const TYPES = [
   { id: 'nf', config: noteFindConfig,            name: 'Note Find' },
 
   { id: 'iv', config: intervalTrainerConfig,     name: 'Interval' },
-  { id: 'ct', config: chordToneConfig,           name: 'Chord Tone' },
+
   { id: 'cp', config: chordPlayerConfig,         name: 'Chord Player' },
   { id: 'sr', config: scaleRunnerConfig,         name: 'Scale Runner' },
   { id: 'mt', config: modeTrainerConfig,         name: 'Mode Trainer' },
@@ -27,7 +27,7 @@ const TYPE_DIFFICULTY = {
   nf: { base: 0.00, span: 0.40 },
 
   iv: { base: 0.20, span: 0.35 },
-  ct: { base: 0.30, span: 0.30 },
+
   cp: { base: 0.35, span: 0.35 },
   sr: { base: 0.50, span: 0.35 },
   mt: { base: 0.60, span: 0.40 },
