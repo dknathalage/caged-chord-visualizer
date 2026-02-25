@@ -5,7 +5,9 @@
   import { NOTES } from '$lib/constants/music.js';
 
   onMount(() => markVisited('caged-visualizer'));
-  import { CHORD_CONFIG, setTuning, adaptShapeToTuning, getBaseFret, resolve, renderDiagram, renderNeck } from '$lib/music/chords.js';
+  import { CHORD_CONFIG, setTuning, adaptShapeToTuning, getBaseFret, resolve } from '$lib/music/chords.js';
+  import ChordDiagram from '$lib/components/svg/ChordDiagram.svelte';
+  import NeckVisualization from '$lib/components/svg/NeckVisualization.svelte';
 
   let curType = $state('maj');
   let curRoot = $state(0);
@@ -141,12 +143,12 @@
         >
           <div class="sh-title" style="color:{col}">{sh.label}</div>
           <div class="sh-sub">{r.baseFret === 0 ? 'Open' : 'Fret ' + r.baseFret} &middot; {chordName}</div>
-          <div class="fb">{@html renderDiagram(r, col)}</div>
+          <div class="fb"><ChordDiagram chord={r} color={col} /></div>
         </div>
       {/each}
     </section>
     <section class="ns" aria-label="Full neck overview">
-      <div class="nc">{@html renderNeck(curRoot, chordType, curShape)}</div>
+      <div class="nc"><NeckVisualization rootIndex={curRoot} {chordType} currentShape={curShape} /></div>
       <div class="leg">
         {#each CHORD_CONFIG.shapes as sh}
           <div class="li">

@@ -1,5 +1,7 @@
 <script>
-  import { renderNoteFretboard, getFretboardDimensions } from '$lib/music/fretboard.js';
+  import { computeStartFret, getFretboardDimensions } from '$lib/music/fretboard.js';
+  import Fretboard from '$lib/components/svg/Fretboard.svelte';
+  import NoteDot from '$lib/components/svg/NoteDot.svelte';
   import { createHoldDetector } from './holdDetection.js';
 
   let { item = null, recall = false, onComplete, onWrong, setMsg, showDetected } = $props();
@@ -9,7 +11,9 @@
   let target = $state(null);
   let targetDisplay = $state('\u2014');
   let targetHidden = $state(false);
-  let fbHtml = $state('');
+  let showRecallPlaceholder = $state(false);
+  let dotColor = $state('#58A6FF');
+  let boardStartFret = $state(0);
   let fbSuccess = $state(false);
   let fbFlash = $state(false);
 
@@ -22,16 +26,17 @@
     ref = inner.ref;
     interval = inner.interval;
     target = inner.targetNote;
+    boardStartFret = computeStartFret(inner.ref.fret);
     if (isRecall) {
       targetDisplay = '?';
       targetHidden = true;
-      const d = getFretboardDimensions();
-      fbHtml = `<svg viewBox="0 0 ${d.W} ${d.H}" xmlns="http://www.w3.org/2000/svg"><text x="${d.W/2}" y="${d.H/2}" text-anchor="middle" dominant-baseline="central" fill="#222" font-size="60" font-family="Outfit" font-weight="900">?</text></svg>`;
+      showRecallPlaceholder = true;
     } else {
       targetDisplay = inner.targetNote;
       targetHidden = false;
-      fbHtml = renderNoteFretboard(inner.ref, null, false);
+      showRecallPlaceholder = false;
     }
+    dotColor = '#58A6FF';
     fbSuccess = false;
     fbFlash = false;
     setMsg('Listening...', false);
@@ -44,7 +49,8 @@
     hold.check(ok, true, () => {
       targetDisplay = target;
       targetHidden = false;
-      fbHtml = renderNoteFretboard(ref, null, true);
+      showRecallPlaceholder = false;
+      dotColor = '#4ECB71';
       fbSuccess = true;
       fbFlash = true;
       onComplete(10, 2);
@@ -55,6 +61,14 @@
   export function handleSilence() {
     showDetected(null, 0, 0, false);
     hold.reset();
+  }
+
+  function dotCx(fret, fretLeft, fretWidth, dotRadius, startFret) {
+    return fret === 0 ? fretLeft + dotRadius * 0.2 : fretLeft + (fret - startFret - 1) * fretWidth + fretWidth / 2;
+  }
+
+  function dotCy(str, topMargin, stringHeight) {
+    return topMargin + (5 - str) * stringHeight + stringHeight / 2;
   }
 </script>
 
@@ -70,7 +84,24 @@
 </div>
 
 <div class="nt-fb-wrap" class:nt-success={fbSuccess} class:nt-flash={fbFlash}>
-  <div>{@html fbHtml}</div>
+  {#if showRecallPlaceholder}
+    {@const d = getFretboardDimensions()}
+    <svg viewBox="0 0 {d.W} {d.H}" xmlns="http://www.w3.org/2000/svg">
+      <text x={d.W/2} y={d.H/2} text-anchor="middle" dominant-baseline="central" fill="#222" font-size="60" font-family="Outfit" font-weight="900">?</text>
+    </svg>
+  {:else if ref}
+    <Fretboard startFret={boardStartFret}>
+      {#snippet children({ fretLeft, topMargin, stringHeight, fretWidth, dotRadius, startFret })}
+        {@const tfr = ref.fret - startFret}
+        {#if tfr >= 0 && tfr <= 7}
+          {@const cx = dotCx(ref.fret, fretLeft, fretWidth, dotRadius, startFret)}
+          {@const cy = dotCy(ref.str, topMargin, stringHeight)}
+          <circle {cx} {cy} r={dotRadius * 1.3} fill={dotColor} opacity=".15"/>
+          <NoteDot {cx} {cy} r={dotRadius} fill={dotColor} label={ref.note} />
+        {/if}
+      {/snippet}
+    </Fretboard>
+  {/if}
 </div>
 
 <style>

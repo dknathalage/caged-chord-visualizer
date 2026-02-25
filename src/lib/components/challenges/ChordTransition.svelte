@@ -1,7 +1,8 @@
 <script>
   import { NOTES } from '$lib/constants/music.js';
   import { STRING_NAMES, BASE_MIDI } from '$lib/music/fretboard.js';
-  import { CHORD_CONFIG, STANDARD_SHAPES, adaptShapeToTuning, resolve, renderDiagram, SHAPE_COLORS } from '$lib/music/chords.js';
+  import { CHORD_CONFIG, STANDARD_SHAPES, adaptShapeToTuning, resolve, SHAPE_COLORS } from '$lib/music/chords.js';
+  import ChordDiagram from '$lib/components/svg/ChordDiagram.svelte';
   import { createHoldDetector } from './holdDetection.js';
 
   let { item = null, recall = false, onComplete, onWrong, onInvalid, setMsg, showDetected } = $props();
@@ -25,9 +26,8 @@
     if (r.voices.length < 3) return null;
     const sortedVoices = [...r.voices].sort((a, b) => a.str - b.str);
     const color = SHAPE_COLORS[sh.id] || '#58A6FF';
-    const dHtml = isRecall ? '' : renderDiagram(r, color);
     const chordName = root + (ct.sym || '');
-    return { root, chordType: ct, shape: sh, resolved: r, sortedVoices, diagramHtml: dHtml, chordName, color, shapeName: sh.label };
+    return { root, chordType: ct, shape: sh, resolved: r, sortedVoices, chordName, color, shapeName: sh.label, showDiagram: !isRecall };
   }
 
   export function prepare(inner, isRecall) {
@@ -119,24 +119,24 @@
 
 <div class="cx-diagrams">
   {#if fromChallenge}
-    {#if recall && !fromChallenge.diagramHtml}
+    {#if recall && !fromChallenge.showDiagram}
       <div class="cx-recall-placeholder" class:cx-diagram-active={cxPhase === 'from'}>
         <span class="cx-recall-icon">?</span>
       </div>
     {:else}
       <div class="cx-diagram" class:cx-diagram-active={cxPhase === 'from'} class:nt-success={cxPhase === 'from' && fbSuccess} class:nt-flash={cxPhase === 'from' && fbFlash}>
-        {@html fromChallenge.diagramHtml}
+        <ChordDiagram chord={fromChallenge.resolved} color={fromChallenge.color} />
       </div>
     {/if}
   {/if}
   {#if toChallenge}
-    {#if recall && !toChallenge.diagramHtml}
+    {#if recall && !toChallenge.showDiagram}
       <div class="cx-recall-placeholder" class:cx-diagram-active={cxPhase === 'to'}>
         <span class="cx-recall-icon">?</span>
       </div>
     {:else}
       <div class="cx-diagram" class:cx-diagram-active={cxPhase === 'to'} class:nt-success={cxPhase === 'to' && fbSuccess} class:nt-flash={cxPhase === 'to' && fbFlash}>
-        {@html toChallenge.diagramHtml}
+        <ChordDiagram chord={toChallenge.resolved} color={toChallenge.color} />
       </div>
     {/if}
   {/if}

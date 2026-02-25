@@ -1,7 +1,8 @@
 <script>
   import { NOTES } from '$lib/constants/music.js';
   import { STRING_NAMES, BASE_MIDI } from '$lib/music/fretboard.js';
-  import { CHORD_CONFIG, STANDARD_SHAPES, adaptShapeToTuning, resolve, renderDiagram, SHAPE_COLORS } from '$lib/music/chords.js';
+  import { CHORD_CONFIG, STANDARD_SHAPES, adaptShapeToTuning, resolve, SHAPE_COLORS } from '$lib/music/chords.js';
+  import ChordDiagram from '$lib/components/svg/ChordDiagram.svelte';
   import { createHoldDetector } from './holdDetection.js';
 
   let { item = null, recall = false, onComplete, onWrong, onInvalid, setMsg, showDetected } = $props();
@@ -26,9 +27,8 @@
     if (r.voices.length < 3) { onInvalid(); return; }
     const sortedVoices = [...r.voices].sort((a, b) => a.str - b.str);
     const color = SHAPE_COLORS[sh.id] || '#58A6FF';
-    const dHtml = isRecall ? '' : renderDiagram(r, color);
     const chordName = root + (ct.sym || '');
-    challenge = { root, chordType: ct, shape: sh, resolved: r, sortedVoices, diagramHtml: dHtml, chordName, color, shapeName: sh.label };
+    challenge = { root, chordType: ct, shape: sh, resolved: r, sortedVoices, chordName, color, shapeName: sh.label, showDiagram: !isRecall };
     voiceIdx = 0;
     voiceDone = sortedVoices.map(() => false);
     fbSuccess = false;
@@ -86,14 +86,14 @@
 </div>
 
 {#if challenge}
-  {#if recall && !challenge.diagramHtml}
+  {#if recall && !challenge.showDiagram}
     <div class="nt-recall-placeholder">
       <span class="nt-recall-icon">?</span>
       <span class="nt-recall-text">Play from memory</span>
     </div>
   {:else}
     <div class="nt-fb-wrap" class:nt-success={fbSuccess} class:nt-flash={fbFlash}>
-      <div>{@html challenge.diagramHtml}</div>
+      <ChordDiagram chord={challenge.resolved} color={challenge.color} />
     </div>
   {/if}
 {/if}

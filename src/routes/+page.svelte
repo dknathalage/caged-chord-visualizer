@@ -1,6 +1,6 @@
 <script>
   import { base } from '$app/paths';
-  import { renderRing } from '$lib/skilltree.js';
+  import ProgressRing from '$lib/components/svg/ProgressRing.svelte';
   import { loadUnifiedMastery } from '$lib/progress.js';
   import { TYPES } from '$lib/learning/configs/unified.js';
   import { migrateToUnified } from '$lib/learning/migration.js';
@@ -34,7 +34,7 @@
 
   <div class="mastery-section">
     <div class="mastery-ring">
-      {@html renderRing(overallPct, '#58A6FF', 140)}
+      <ProgressRing percent={overallPct} color="#58A6FF" size={140} />
       <div class="mastery-pct">{overallPct}%</div>
     </div>
     {#if um && um.totalItems > 0}

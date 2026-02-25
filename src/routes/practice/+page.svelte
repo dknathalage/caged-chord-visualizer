@@ -7,7 +7,9 @@
   import { unifiedConfig, TYPES } from '$lib/learning/configs/unified.js';
   import { migrateToUnified } from '$lib/learning/migration.js';
   import { addToast } from '$lib/stores/notifications.svelte.js';
-  import { renderRing } from '$lib/skilltree.js';
+  import ProgressRing from '$lib/components/svg/ProgressRing.svelte';
+  import CoverageHeatmap from '$lib/components/svg/CoverageHeatmap.svelte';
+  import ThetaSparkline from '$lib/components/svg/ThetaSparkline.svelte';
   import LearningDashboard from '$lib/components/LearningDashboard.svelte';
   import PitchDisplay from '$lib/components/challenges/PitchDisplay.svelte';
   import NoteFind from '$lib/components/challenges/NoteFind.svelte';
@@ -105,58 +107,6 @@
   }
   function sfnFatigueColor(f) { return f ? '#FF6B6B' : '#4ECB71'; }
   function sfnFatigueLabel(f) { return f ? 'Fatigued' : 'Fresh'; }
-
-  function renderCoverageHeatmap(coverage) {
-    if (!coverage) return '';
-    const zones = ['zone_0', 'zone_3', 'zone_5', 'zone_7', 'zone_9', 'zone_12'];
-    const zoneLabels = ['0', '3', '5', '7', '9', '12+'];
-    const cellW = 28, cellH = 18, padL = 24, padT = 16, gap = 2;
-    const w = padL + zones.length * (cellW + gap);
-    const h = padT + 6 * (cellH + gap);
-    let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
-    for (let z = 0; z < zones.length; z++) {
-      svg += `<text x="${padL + z * (cellW + gap) + cellW / 2}" y="10" text-anchor="middle" fill="var(--mt)" font-size="8" font-family="JetBrains Mono">${zoneLabels[z]}</text>`;
-    }
-    const strNames = ['e','B','G','D','A','E'];
-    for (let s = 0; s < 6; s++) {
-      svg += `<text x="${padL - 6}" y="${padT + s * (cellH + gap) + cellH / 2 + 3}" text-anchor="end" fill="var(--mt)" font-size="8" font-family="JetBrains Mono">${strNames[s]}</text>`;
-    }
-    for (let s = 0; s < 6; s++) {
-      for (let z = 0; z < zones.length; z++) {
-        const cellKey = `str_${s}:${zones[z]}`;
-        const cell = coverage[cellKey] || { count: 0, avgPL: 0 };
-        const opacity = cell.count === 0 ? 0.08 : Math.min(1, 0.3 + cell.count * 0.15);
-        let fill;
-        if (cell.count === 0) fill = '#30363D';
-        else if (cell.avgPL >= 0.8) fill = '#4ECB71';
-        else if (cell.avgPL >= 0.4) fill = '#F0A030';
-        else fill = '#FF6B6B';
-        const x = padL + z * (cellW + gap);
-        const y = padT + s * (cellH + gap);
-        svg += `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="3" fill="${fill}" opacity="${opacity}"/>`;
-        if (cell.count > 0) {
-          svg += `<text x="${x + cellW / 2}" y="${y + cellH / 2 + 3}" text-anchor="middle" fill="#fff" font-size="7" font-family="JetBrains Mono" opacity="0.9">${Math.round(cell.avgPL * 100)}</text>`;
-        }
-      }
-    }
-    svg += '</svg>';
-    return svg;
-  }
-
-  function renderThetaSparkline(history) {
-    if (!history || history.length < 2) return '';
-    const w = 80, h = 20, pad = 2;
-    const thetas = history.map(h => h.theta);
-    const min = Math.min(...thetas);
-    const max = Math.max(...thetas);
-    const range = max - min || 0.01;
-    const pts = thetas.map((t, i) => {
-      const x = pad + (i / (thetas.length - 1)) * (w - pad * 2);
-      const y = h - pad - ((t - min) / range) * (h - pad * 2);
-      return `${x},${y}`;
-    }).join(' ');
-    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><polyline points="${pts}" fill="none" stroke="var(--ac)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  }
 
   // --- Shared callbacks passed to challenge components ---
   function showDetected(note, cents, hz, isCorrect) {
@@ -305,7 +255,7 @@
   {#if phase === 'idle'}
     <div class="idle-panel">
       <div class="mastery-ring">
-        {@html renderRing(mastery ? Math.round(mastery.overall.avgPL * 100) : 0, '#58A6FF', 120)}
+        <ProgressRing percent={mastery ? Math.round(mastery.overall.avgPL * 100) : 0} color="#58A6FF" size={120} />
         <div class="mastery-pct">{mastery ? Math.round(mastery.overall.avgPL * 100) : 0}%</div>
       </div>
       <div class="type-bars">
@@ -370,7 +320,7 @@
         <div class="sfn-panel-row">
           <div class="sfn-panel-metric sfn-wide">
             <span class="sfn-panel-label">&theta; History</span>
-            <span class="sfn-panel-value sfn-sparkline">{@html renderThetaSparkline(engine.thetaHistory)}<span class="sfn-theta-val">{engine.theta.toFixed(3)}</span></span>
+            <span class="sfn-panel-value sfn-sparkline"><ThetaSparkline history={engine.thetaHistory} /><span class="sfn-theta-val">{engine.theta.toFixed(3)}</span></span>
           </div>
         </div>
         {#if curItemStats}
@@ -406,7 +356,7 @@
       <div class="sfn-panel sfn-coverage-panel">
         <div class="sfn-panel-subtitle">Fretboard Coverage</div>
         {#if sessionMastery}
-          <div class="sfn-coverage-grid">{@html renderCoverageHeatmap(sessionMastery.coverage)}</div>
+          <div class="sfn-coverage-grid"><CoverageHeatmap coverage={sessionMastery.coverage} /></div>
         {:else}
           <div class="sfn-panel-empty">No coverage data yet</div>
         {/if}

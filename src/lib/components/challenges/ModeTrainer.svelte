@@ -1,19 +1,38 @@
 <script>
   import { NOTES, MODES } from '$lib/constants/music.js';
-  import { STRING_NAMES, scaleSequence } from '$lib/music/fretboard.js';
-  import { renderSeqFB } from './seqFretboard.js';
+  import { STRING_NAMES, scaleSequence, FRETBOARD_LAYOUT } from '$lib/music/fretboard.js';
+  import Fretboard from '$lib/components/svg/Fretboard.svelte';
   import { createHoldDetector } from './holdDetection.js';
 
   let { item = null, recall = false, onComplete, onWrong, onInvalid, setMsg, showDetected } = $props();
 
   let challenge = $state(null);
   let noteIdx = $state(0);
-  let fbHtml = $state('');
   let fbVisible = $state(false);
   let fbSuccess = $state(false);
   let fbFlash = $state(false);
+  let boardStartFret = $state(0);
 
   const hold = createHoldDetector();
+
+  function computeSeqStartFret(startFret) {
+    const center = startFret + 2;
+    let sf = Math.max(0, center - Math.floor(FRETBOARD_LAYOUT.VISIBLE_FRETS / 2));
+    if (sf + FRETBOARD_LAYOUT.VISIBLE_FRETS > 22) sf = Math.max(0, 22 - FRETBOARD_LAYOUT.VISIBLE_FRETS);
+    return sf;
+  }
+
+  function uniqueNotes(seq) {
+    return [...new Map(seq.map(n => [`${n.str}-${n.fret}`, n])).values()];
+  }
+
+  function dotState(n, seq, currentIdx) {
+    const seqIdx = seq.findIndex(sn => sn.str === n.str && sn.fret === n.fret);
+    const lastIdx = seq.findLastIndex(sn => sn.str === n.str && sn.fret === n.fret);
+    if (seqIdx <= currentIdx && lastIdx <= currentIdx) return { col: '#4ECB71', opacity: 0.4 };
+    if (seqIdx === currentIdx || lastIdx === currentIdx) return { col: '#4ECB71', opacity: 1.0 };
+    return { col: '#58A6FF', opacity: 0.7 };
+  }
 
   export function prepare(inner, isRecall) {
     recall = isRecall;
@@ -33,7 +52,7 @@
     fbVisible = !isRecall;
     fbSuccess = false;
     fbFlash = false;
-    fbHtml = renderSeqFB(seq, 0, startFret);
+    boardStartFret = computeSeqStartFret(startFret);
     const t = seq[0];
     setMsg(`Play ${root} ${mode.name}: start with ${t.note} (${STRING_NAMES[t.str]} fret ${t.fret})`, false);
   }
@@ -49,7 +68,6 @@
       noteIdx++;
       hold.resetAfterVoice();
       if (noteIdx >= challenge.seq.length) {
-        fbHtml = renderSeqFB(challenge.seq, noteIdx, challenge.startFret);
         fbSuccess = true;
         fbFlash = true;
         onComplete(40, 3);
@@ -57,7 +75,6 @@
       } else {
         const t = challenge.seq[noteIdx];
         setMsg(`Next: ${t.note} (${STRING_NAMES[t.str]} fret ${t.fret})`, false);
-        fbHtml = renderSeqFB(challenge.seq, noteIdx, challenge.startFret);
       }
     }, onWrong);
   }
@@ -65,6 +82,14 @@
   export function handleSilence() {
     showDetected(null, 0, 0, false);
     hold.reset();
+  }
+
+  function dotCx(fret, fretLeft, fretWidth, dotRadius, startFret) {
+    return fret === 0 ? fretLeft + dotRadius * 0.2 : fretLeft + (fret - startFret - 1) * fretWidth + fretWidth / 2;
+  }
+
+  function dotCy(str, topMargin, stringHeight) {
+    return topMargin + (5 - str) * stringHeight + stringHeight / 2;
   }
 </script>
 
@@ -83,9 +108,24 @@
   {/if}
 </div>
 
-{#if fbVisible}
+{#if fbVisible && challenge}
   <div class="nt-fb-wrap" class:nt-success={fbSuccess} class:nt-flash={fbFlash}>
-    <div>{@html fbHtml}</div>
+    <Fretboard startFret={boardStartFret}>
+      {#snippet children({ fretLeft, topMargin, stringHeight, fretWidth, dotRadius, visibleFrets, startFret })}
+        {#each uniqueNotes(challenge.seq) as n}
+          {@const tfr = n.fret - startFret}
+          {#if tfr >= 0 && tfr <= visibleFrets}
+            {@const cx = dotCx(n.fret, fretLeft, fretWidth, dotRadius, startFret)}
+            {@const cy = dotCy(n.str, topMargin, stringHeight)}
+            {@const ds = dotState(n, challenge.seq, noteIdx)}
+            {@const fs = n.note.length > 1 ? dotRadius * 0.8 : dotRadius}
+            <circle {cx} {cy} r={dotRadius * 1.3} fill={ds.col} opacity={ds.opacity * 0.15}/>
+            <circle {cx} {cy} r={dotRadius} fill={ds.col} opacity={ds.opacity}/>
+            <text x={cx} y={cy} text-anchor="middle" dominant-baseline="central" fill="#fff" font-size={fs} font-weight="bold" font-family="JetBrains Mono">{n.note}</text>
+          {/if}
+        {/each}
+      {/snippet}
+    </Fretboard>
   </div>
 {/if}
 
