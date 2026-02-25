@@ -76,6 +76,19 @@
   function fmtPL(v) { return v.toFixed(2); }
   function fmtS(v) { return v >= 1 ? v.toFixed(0) + 'd' : v > 0 ? '<1d' : '\u2014'; }
   function fmtR(v) { return v > 0 ? (v * 100).toFixed(0) + '%' : '\u2014'; }
+  function fmtFluency(v) { return v > 0 ? v.toFixed(1) + 'x' : '\u2014'; }
+
+  function fluencyColor(ratio) {
+    if (ratio <= 0) return 'var(--mt)';
+    if (ratio < 1.0) return '#4ECB71';
+    if (ratio <= 1.3) return '#F0A030';
+    return '#FF6B6B';
+  }
+
+  function fluencyPct(ratio) {
+    if (ratio <= 0) return 0;
+    return Math.min(100, (1 / Math.max(0.3, ratio)) * 100);
+  }
 
   function plColor(pL) {
     if (pL >= 0.95) return '#4ECB71';
@@ -150,6 +163,13 @@
           <span>{mastery.overall.masteredCount}/{mastery.overall.totalItems} mastered</span>
         </div>
 
+        {#if mastery.overall.plateauDetected}
+          <div class="ld-plateau-warn">
+            <span class="ld-plateau-icon">&#9650;</span>
+            <span>Plateau detected — try varying exercises or difficulty</span>
+          </div>
+        {/if}
+
         <!-- Clusters as radial grid -->
         {#if mastery.clusters.length > 0}
           <div class="ld-section">
@@ -183,6 +203,7 @@
                   <tr>
                     <th onclick={() => setSort('key')}>Key</th>
                     <th onclick={() => setSort('pL')}>pL</th>
+                    <th onclick={() => setSort('fluencyRatio')}>Flu</th>
                     <th onclick={() => setSort('S')}>S</th>
                     <th onclick={() => setSort('R')}>R</th>
                     <th onclick={() => setSort('avgTime')}>Time</th>
@@ -196,6 +217,12 @@
                     <tr>
                       <td class="ld-key">{it.key.length > 14 ? it.key.slice(0, 14) + '\u2026' : it.key}</td>
                       <td style="color:{plColor(it.pL)}">{fmtPL(it.pL)}</td>
+                      <td class="ld-fluency-cell">
+                        <div class="ld-fluency-bar">
+                          <div class="ld-fluency-fill" style="width:{fluencyPct(it.fluencyRatio)}%;background:{fluencyColor(it.fluencyRatio)}"></div>
+                        </div>
+                        <span style="color:{fluencyColor(it.fluencyRatio)}">{fmtFluency(it.fluencyRatio)}</span>
+                      </td>
                       <td>{fmtS(it.S)}</td>
                       <td>{fmtR(it.R)}</td>
                       <td>{fmtMs(it.avgTime)}</td>
@@ -269,6 +296,16 @@
   .ld-table td{padding:.2rem .3rem;border-bottom:1px solid rgba(255,255,255,.04)}
   .ld-key{max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mt)}
   .ld-conf{font-size:9px;color:var(--mt);white-space:nowrap}
+
+  /* Plateau warning */
+  .ld-plateau-warn{display:flex;align-items:center;gap:.4rem;padding:.35rem .5rem;background:rgba(240,160,48,.1);border:1px solid rgba(240,160,48,.3);border-radius:6px;font-size:10px;color:#F0A030}
+  .ld-plateau-icon{font-size:11px}
+
+  /* Fluency bar */
+  .ld-fluency-cell{display:flex;flex-direction:column;gap:1px;min-width:40px}
+  .ld-fluency-bar{width:100%;height:3px;background:var(--sf2);border-radius:2px;overflow:hidden}
+  .ld-fluency-fill{height:100%;border-radius:2px;transition:width .3s}
+  .ld-fluency-cell span{font-size:9px}
 
   .ld-empty{text-align:center;color:var(--mt);padding:1rem;font-size:12px}
 

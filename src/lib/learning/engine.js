@@ -1,5 +1,4 @@
-const ADJ_EVERY = 8;
-const COLD_START = 7;
+let COLD_START = 7;
 const C = 1.2; // UCB1 exploration constant
 const MS_PER_DAY = 86400000;
 const MAX_TIMES = 10;
@@ -8,7 +7,7 @@ const MAX_CORRECT_TIMES = 200;
 const MAX_CONFUSIONS = 10;
 const SESSION_WINDOW = 20;
 const STORE_PREFIX = 'gl_learn_';
-const VERSION = 2;
+const VERSION = 3;
 
 // FSRS constants
 const FACTOR = 19 / 81;
@@ -96,7 +95,7 @@ export class LearningEngine {
     this.items = new Map();
     this.clusters = new Map();
     this.qNum = 0;
-    this.params = structuredClone(config.initialParams);
+    this.theta = 0.05; // student ability (0-1), starts just above easiest items
     this.totalAttempts = 0;
     this.allCorrectTimes = [];
     this.recentKeys = [];
@@ -108,37 +107,110 @@ export class LearningEngine {
     this.fatigued = false;
     this.preFatigueAccuracy = null;
 
+    // Phase 1: transient queues (not persisted)
+    this.microDrillQueue = [];
+    this.confusionDrillQueue = [];
+    this.overdueQueue = null; // null = not built yet
+    this.coldStartTypes = null;
+
+    // Phase 2: plateau detection
+    this.thetaHistory = [];
+    this.plateauDetected = false;
+
     if (exerciseId) this._load();
   }
 
   next() {
     this.qNum++;
 
-    // Cold start: pure random for first COLD_START questions
-    if (this.qNum <= COLD_START) {
-      const item = this.config.genRandom(this.params, this.lastItem, this);
+    // Cold start: round-robin types then random (#1d)
+    const typeCount = this.config.getTypeIds ? this.config.getTypeIds().length : 0;
+    const dynamicColdStart = Math.max(COLD_START, typeCount);
+    if (this.qNum <= dynamicColdStart) {
+      let item;
+      // Round-robin through types first
+      if (typeCount > 0 && this.qNum <= typeCount) {
+        if (!this.coldStartTypes) {
+          const ids = [...this.config.getTypeIds()];
+          // Shuffle
+          for (let i = ids.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [ids[i], ids[j]] = [ids[j], ids[i]];
+          }
+          this.coldStartTypes = ids;
+        }
+        const typeId = this.coldStartTypes[this.qNum - 1];
+        item = this.config.genFromType(typeId, this.lastItem, this);
+      } else {
+        item = this.config.genRandom(this.lastItem, this);
+      }
       this._ensureItem(item);
       this._trackRecent(item);
       this.lastItem = item;
       return item;
     }
 
-    // Collect candidates: all known items + 3 new random ones
+    // 1c. Overdue queue (FSRS due-date session planning)
+    if (this.overdueQueue === null) {
+      this._buildOverdueQueue();
+    }
+    if (this.overdueQueue.length > 0) {
+      const item = this.overdueQueue.shift();
+      this._ensureItem(item);
+      this._trackRecent(item);
+      this.lastItem = item;
+      return item;
+    }
+
+    // 1a. Micro-drill queue
+    if (this.microDrillQueue.length > 0) {
+      const item = this.microDrillQueue.shift();
+      this._ensureItem(item);
+      this._trackRecent(item);
+      this.lastItem = item;
+      return item;
+    }
+    if (this._shouldMicroDrill()) {
+      const drills = this.config.microDrill ? this.config.microDrill(this.lastItem) : null;
+      if (drills && drills.length > 0) {
+        this.microDrillQueue = drills.slice(1);
+        const item = drills[0];
+        this._ensureItem(item);
+        this._trackRecent(item);
+        this.lastItem = item;
+        return item;
+      }
+    }
+
+    // 1b. Confusion drill queue
+    if (this.confusionDrillQueue.length > 0) {
+      const item = this.confusionDrillQueue.shift();
+      this._ensureItem(item);
+      this._trackRecent(item);
+      this.lastItem = item;
+      return item;
+    }
+    this._buildConfusionDrill();
+    if (this.confusionDrillQueue.length > 0) {
+      const item = this.confusionDrillQueue.shift();
+      this._ensureItem(item);
+      this._trackRecent(item);
+      this.lastItem = item;
+      return item;
+    }
+
+    // Collect candidates: all known items + 10 new random ones
     const candidates = [];
 
     // Known items
     for (const [key, rec] of this.items) {
-      const item = this.config.itemFromKey(key, this.params);
+      const item = this.config.itemFromKey(key);
       candidates.push({ item, rec, isNew: false });
     }
 
-    // New candidates — mix in frontier items based on recent mastery
-    const fp = this._frontierProb();
-    const frontierParams = fp > 0 ? this.config.adjustParams(this.params, 1, 0.5) : null;
-    for (let i = 0; i < 3; i++) {
-      const useFrontier = frontierParams && Math.random() < fp;
-      const p = useFrontier ? frontierParams : this.params;
-      const item = this.config.genRandom(p, this.lastItem, this);
+    // New candidates
+    for (let i = 0; i < 10; i++) {
+      const item = this.config.genRandom(this.lastItem, this);
       const key = this.config.itemKey(item);
       if (!this.items.has(key)) {
         candidates.push({ item, rec: null, isNew: true });
@@ -146,7 +218,7 @@ export class LearningEngine {
     }
 
     if (candidates.length === 0) {
-      const item = this.config.genRandom(this.params, this.lastItem, this);
+      const item = this.config.genRandom(this.lastItem, this);
       this._ensureItem(item);
       this._trackRecent(item);
       this.lastItem = item;
@@ -223,6 +295,9 @@ export class LearningEngine {
     // BKT update (with response-time modulation)
     this._updateBKT(rec, ok, timeMs, med);
 
+    // 1e. BKT/FSRS reconciliation
+    this._reconcileBKTFSRS(rec);
+
     // Update cluster stats
     for (const cid of rec.cls) {
       const cl = this._ensureCluster(cid);
@@ -230,22 +305,24 @@ export class LearningEngine {
       cl.total++;
     }
 
+    // Update theta (student ability)
+    const itemDifficulty = this.config.itemDifficulty ? this.config.itemDifficulty(item) : 0.5;
+    this._updateTheta(itemDifficulty, ok);
+
+    // 2b. Theta snapshot for plateau detection (every 20 questions)
+    if (this.totalAttempts % 20 === 0) {
+      this.thetaHistory.push({ ts: Date.now(), theta: this.theta });
+      if (this.thetaHistory.length > 50) this.thetaHistory.shift();
+    }
+    this._checkPlateau();
+
     // Session fatigue tracking
     this.sessionWindow.push({ ok, timeMs: timeMs || 0, qNum: this.qNum });
     if (this.sessionWindow.length > SESSION_WINDOW) this.sessionWindow.shift();
     this._checkFatigue();
 
-    // Difficulty adjustment every ADJ_EVERY questions
-    if (this.qNum > 0 && this.qNum % ADJ_EVERY === 0) {
-      this._adjustDifficulty();
-    }
-
     // Auto-save
     if (this.exerciseId) this._save();
-  }
-
-  getParams() {
-    return { ...this.params };
   }
 
   getMastery() {
@@ -256,6 +333,8 @@ export class LearningEngine {
       const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / MS_PER_DAY : 0;
       const R = rec.S > 0 && rec.lastReviewTs > 0 ? fsrsRetrievability(elapsed, rec.S) : 0;
       const topConfusion = this._topConfusion(rec);
+      const targetTime = this._targetTime(rec);
+      const fluencyRatio = targetTime > 0 && rec.avgTime > 0 ? rec.avgTime / targetTime : 0;
       itemList.push({
         key,
         pL: rec.pL,
@@ -263,6 +342,8 @@ export class LearningEngine {
         D: rec.D,
         R,
         avgTime: rec.avgTime,
+        targetTime,
+        fluencyRatio,
         mastered: this._isMastered(rec),
         attempts: rec.attempts,
         correct: rec.correct,
@@ -302,6 +383,7 @@ export class LearningEngine {
       items: itemList,
       clusters: clusterList,
       fatigued: this.fatigued,
+      coverage: this.getCoverageMatrix(),
       overall: {
         avgPL,
         totalItems,
@@ -310,6 +392,8 @@ export class LearningEngine {
         avgResponseTime,
         sessionQuestions: this.qNum,
         sessionAccuracy: totalAtt > 0 ? totalCorrect / totalAtt : 0,
+        theta: this.theta,
+        plateauDetected: this.plateauDetected,
       },
     };
   }
@@ -331,7 +415,7 @@ export class LearningEngine {
     this.items = new Map();
     this.clusters = new Map();
     this.qNum = 0;
-    this.params = structuredClone(this.config.initialParams);
+    this.theta = 0.05;
     this.totalAttempts = 0;
     this.allCorrectTimes = [];
     this.recentKeys = [];
@@ -339,10 +423,32 @@ export class LearningEngine {
     this.sessionWindow = [];
     this.fatigued = false;
     this.preFatigueAccuracy = null;
+    // Phase 1 transient state
+    this.microDrillQueue = [];
+    this.confusionDrillQueue = [];
+    this.overdueQueue = null;
+    this.coldStartTypes = null;
+    // Phase 2
+    this.thetaHistory = [];
+    this.plateauDetected = false;
   }
 
   save() {
     if (this.exerciseId) this._save();
+  }
+
+  // --- Theta (student ability) update ---
+
+  _updateTheta(difficulty, ok) {
+    const alpha = 10;
+    const K = 0.04;
+    const expected = 1 / (1 + Math.exp(-alpha * (this.theta - difficulty)));
+    if (ok) {
+      this.theta += K * (1 - expected);
+    } else {
+      this.theta -= K * expected;
+    }
+    this.theta = clamp(this.theta, 0, 1);
   }
 
   // --- FSRS ---
@@ -397,18 +503,31 @@ export class LearningEngine {
   // --- Item selection ---
 
   _scoreCandidate(c) {
-    const { rec, isNew } = c;
+    const { rec, isNew, item } = c;
+
+    // Get item difficulty from config
+    const difficulty = this.config.itemDifficulty ? this.config.itemDifficulty(item) : 0.5;
+
+    // 2a. Adaptive sigma/offset based on session accuracy
+    const sigma = this._adaptiveSigma();
+    const offset = this._adaptiveOffset();
 
     if (isNew) {
-      return 1.0 + 0.2; // exploitation(1) + new_bonus(0.2)
+      // Gaussian centered slightly above θ (zone of proximal development)
+      const mu = this.theta + offset;
+      const score = Math.exp(-((difficulty - mu) ** 2) / (2 * sigma ** 2));
+      return score;
     }
 
     const pL = rec.pL;
     const mastered = this._isMastered(rec);
     const exploitation = 1 - pL;
-    const exploration = C * Math.sqrt(Math.log(this.totalAttempts + 1) / Math.max(1, rec.attempts));
 
-    // FSRS retrievability-based review urgency (replaces old due bonus)
+    // 2b. Plateau: boost exploration when plateau detected
+    const explorationC = this.plateauDetected ? C * 1.5 : C;
+    const exploration = explorationC * Math.sqrt(Math.log(this.totalAttempts + 1) / Math.max(1, rec.attempts));
+
+    // FSRS retrievability-based review urgency
     let reviewUrgency = 0;
     if (rec.S > 0 && rec.lastReviewTs > 0) {
       const elapsed = (Date.now() - rec.lastReviewTs) / MS_PER_DAY;
@@ -416,7 +535,7 @@ export class LearningEngine {
       reviewUrgency = mastered ? (1 - R) * 0.3 : (1 - R) * 0.5;
     }
 
-    // Confusion pair boost: if this item is frequently confused with a recently-asked item
+    // Confusion pair boost
     let confusionBoost = 0;
     if (rec.confusions.length > 0 && this.recentKeys.length > 0) {
       const freq = {};
@@ -424,7 +543,6 @@ export class LearningEngine {
       for (const rk of this.recentKeys.slice(-3)) {
         const rrec = this.items.get(rk);
         if (rrec) {
-          // Check if the recently-asked item's key matches a confused detection
           if (freq[rk] && freq[rk] >= 2) {
             confusionBoost = 0.3;
             break;
@@ -433,8 +551,9 @@ export class LearningEngine {
       }
     }
 
-    // Learning zone bonus (increased)
-    const desirable = (pL >= 0.3 && pL <= 0.7) ? 0.25 : 0;
+    // Difficulty match bonus — also uses adaptive sigma, with plateau widening
+    const matchSigma = this.plateauDetected ? sigma * 1.5 : sigma;
+    const difficultyMatch = Math.exp(-((difficulty - this.theta) ** 2) / (2 * matchSigma ** 2)) * 0.3;
 
     // Interleave penalty
     let interleave = 0;
@@ -449,18 +568,33 @@ export class LearningEngine {
       }
     }
 
-    // Fatigue bias: prefer easier items when fatigued
+    // Fatigue bias
     const fatigueBias = this.fatigued ? (pL * 0.3) : 0;
 
-    // Fluency penalty: correct but slow items need more practice
+    // 2c. Improved fluency penalty using target time
     let fluencyPenalty = 0;
-    const med = median(this.allCorrectTimes);
-    if (rec.pL > 0.7 && med > 0 && rec.avgTime > med * 1.3) {
-      fluencyPenalty = 0.2;
+    const targetTime = this._targetTime(rec);
+    if (rec.pL > 0.5 && targetTime > 0 && rec.avgTime > 0) {
+      const ratio = rec.avgTime / targetTime;
+      if (ratio > 1.3) {
+        fluencyPenalty = Math.min(0.4, (ratio - 1.3) * 0.4);
+      }
+    }
+
+    // 3b. Coverage bonus
+    let coverageBonus = 0;
+    if (rec.cls) {
+      const strCl = rec.cls.find(c => c.startsWith('str_'));
+      const zoneCl = rec.cls.find(c => c.startsWith('zone_'));
+      if (strCl && zoneCl) {
+        const cell = this._getCoverageCell(strCl, zoneCl);
+        if (cell.count < 3) coverageBonus = 0.2;
+        else if (cell.avgPL < 0.3) coverageBonus = 0.15;
+      }
     }
 
     return exploitation + exploration + reviewUrgency + confusionBoost
-      + desirable + interleave + fatigueBias + fluencyPenalty;
+      + difficultyMatch + interleave + fatigueBias + fluencyPenalty + coverageBonus;
   }
 
   _isMastered(rec) {
@@ -492,7 +626,6 @@ export class LearningEngine {
       if (accDrop > 0.20 || timeIncrease > 0.40) {
         this.fatigued = true;
         this.preFatigueAccuracy = accOlder;
-        this._adjustDifficulty(-1);
       }
     } else {
       // Recovery: accuracy returns to within 10% of pre-fatigue baseline
@@ -516,40 +649,172 @@ export class LearningEngine {
     return top;
   }
 
-  // --- Difficulty adjustment ---
+  // --- Phase 1 helpers ---
 
-  _adjustDifficulty(forceDir) {
-    const seen = [...this.items.values()].filter(r => r.attempts > 0);
-    if (seen.length === 0) return;
-
-    const recentWindow = ADJ_EVERY * 2;
-    const recent = seen.filter(r => this.qNum - r.lastSeen <= recentWindow);
-    const basis = recent.length >= 5 ? recent : seen;
-    const avgPL = basis.reduce((s, r) => s + r.pL, 0) / basis.length;
-
-    let dir;
-    if (forceDir != null) {
-      dir = forceDir;
-    } else if (avgPL > 0.80) {
-      dir = 1;
-    } else if (avgPL < 0.50) {
-      dir = -1;
-    } else {
-      return;
-    }
-
-    const midpoint = 0.65;
-    const mag = 1 / (1 + Math.exp(-8 * (Math.abs(avgPL - midpoint) - 0.1)));
-    this.params = this.config.adjustParams(this.params, dir, mag);
+  _shouldMicroDrill() {
+    if (!this.lastItem) return false;
+    const key = this.config.itemKey(this.lastItem);
+    const rec = this.items.get(key);
+    if (!rec || rec.hist.length < 3) return false;
+    const recent = rec.hist.slice(-5);
+    const failures = recent.filter(h => !h).length;
+    return failures >= 3;
   }
 
-  _frontierProb() {
-    const recent = [...this.items.values()]
-      .filter(r => r.attempts > 0 && this.qNum - r.lastSeen <= ADJ_EVERY * 2);
-    if (recent.length < 3) return 0;
-    const avgPL = recent.reduce((s, r) => s + r.pL, 0) / recent.length;
-    if (avgPL < 0.6) return 0;
-    return Math.min(0.3, (avgPL - 0.6) / 0.3 * 0.3);
+  _buildOverdueQueue() {
+    const now = Date.now();
+    const overdue = [];
+    for (const [key, rec] of this.items) {
+      if (rec.due > 0 && rec.due < now) {
+        const item = this.config.itemFromKey(key);
+        overdue.push({ item, overdueness: now - rec.due });
+      }
+    }
+    overdue.sort((a, b) => b.overdueness - a.overdueness);
+    this.overdueQueue = overdue.slice(0, 10).map(o => o.item);
+  }
+
+  _buildConfusionDrill() {
+    if (!this.lastItem) return;
+    const key = this.config.itemKey(this.lastItem);
+    const rec = this.items.get(key);
+    if (!rec || rec.confusions.length === 0) return;
+
+    // Cooldown: 10-question gap
+    if (rec._lastConfDrill && (this.qNum - rec._lastConfDrill) < 10) return;
+
+    // Last answer must be wrong
+    if (rec.hist.length === 0 || rec.hist[rec.hist.length - 1]) return;
+
+    // Find confused values with ≥2 occurrences
+    const freq = {};
+    for (const cf of rec.confusions) freq[cf.detected] = (freq[cf.detected] || 0) + 1;
+    let confusedValue = null;
+    for (const [val, count] of Object.entries(freq)) {
+      if (count >= 2) { confusedValue = val; break; }
+    }
+    if (!confusedValue) return;
+
+    // Build alternation: [original, confused, original, confused]
+    const original = this.lastItem;
+    const confused = this._itemForConfusedValue(confusedValue, original);
+    if (!confused) return;
+
+    rec._lastConfDrill = this.qNum;
+    this.confusionDrillQueue = [original, confused, original, confused];
+  }
+
+  _itemForConfusedValue(confusedValue, originalItem) {
+    if (this.config.genFromCluster) {
+      try {
+        return this.config.genFromCluster('note_' + confusedValue, originalItem);
+      } catch { /* fallthrough */ }
+    }
+    return null;
+  }
+
+  // --- Phase 1e: BKT/FSRS reconciliation ---
+
+  _reconcileBKTFSRS(rec) {
+    if (rec.S <= 0) return;
+    const now = Date.now();
+    const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / MS_PER_DAY : 0;
+    const R = fsrsRetrievability(elapsed, rec.S);
+
+    // High pL + low R: BKT thinks learned, FSRS thinks forgotten
+    if (rec.pL > 0.8 && R < 0.5 && rec.S > 0) {
+      rec.pL = rec.pL * 0.8 + R * 0.2;
+    }
+    // Low pL + high S + high R: FSRS stable, BKT disagrees
+    else if (rec.pL < 0.4 && rec.S > 5 && R > 0.85) {
+      rec.pL = rec.pL * 0.7 + R * 0.3;
+    }
+    // High pL + very low S + few attempts: lucky streak
+    else if (rec.pL > 0.8 && rec.S < 0.5 && rec.attempts < 5) {
+      rec.pL = Math.min(rec.pL, 0.7);
+    }
+  }
+
+  // --- Phase 2 helpers ---
+
+  _adaptiveSigma() {
+    if (this.totalAttempts < 10) return 0.12;
+    const recent = this.sessionWindow.slice(-20);
+    if (recent.length < 10) return 0.12;
+    const acc = recent.filter(r => r.ok).length / recent.length;
+    if (acc > 0.90) return 0.15 + (acc - 0.90) * 1.0; // 0.15-0.25
+    if (acc < 0.80) return 0.06 + acc * 0.05; // 0.06-0.10
+    return 0.12;
+  }
+
+  _adaptiveOffset() {
+    if (this.totalAttempts < 10) return 0.02;
+    const recent = this.sessionWindow.slice(-20);
+    if (recent.length < 10) return 0.02;
+    const acc = recent.filter(r => r.ok).length / recent.length;
+    if (acc > 0.90) return 0.05;
+    if (acc < 0.80) return -0.02;
+    return 0.02;
+  }
+
+  _checkPlateau() {
+    if (this.thetaHistory.length < 5) {
+      this.plateauDetected = false;
+      return;
+    }
+    const recent = this.thetaHistory.slice(-5);
+    const thetas = recent.map(h => h.theta);
+    const range = Math.max(...thetas) - Math.min(...thetas);
+    this.plateauDetected = range < 0.03;
+  }
+
+  _targetTime(rec) {
+    if (this.allCorrectTimes.length < 5) return 0;
+    const base = percentile(this.allCorrectTimes, 75);
+    if (base <= 0) return 0;
+    const factor = 1.0 - (rec.pL * 0.4); // mastered items get 60% of base
+    return base * factor;
+  }
+
+  // --- Phase 3b: Coverage tracking ---
+
+  getCoverageMatrix() {
+    // 6 strings × 6 zones
+    const zones = ['zone_0', 'zone_3', 'zone_5', 'zone_7', 'zone_9', 'zone_12'];
+    const matrix = {};
+    for (let s = 0; s < 6; s++) {
+      for (const z of zones) {
+        const cellKey = `str_${s}:${z}`;
+        matrix[cellKey] = { count: 0, totalPL: 0, avgPL: 0 };
+      }
+    }
+
+    for (const [, rec] of this.items) {
+      const strCl = rec.cls.find(c => c.startsWith('str_'));
+      const zoneCl = rec.cls.find(c => c.startsWith('zone_'));
+      if (strCl && zoneCl) {
+        const cellKey = `${strCl}:${zoneCl}`;
+        if (matrix[cellKey]) {
+          matrix[cellKey].count++;
+          matrix[cellKey].totalPL += rec.pL;
+          matrix[cellKey].avgPL = matrix[cellKey].totalPL / matrix[cellKey].count;
+        }
+      }
+    }
+
+    return matrix;
+  }
+
+  _getCoverageCell(strCluster, zoneCluster) {
+    const cellKey = `${strCluster}:${zoneCluster}`;
+    let count = 0, totalPL = 0;
+    for (const [, rec] of this.items) {
+      if (rec.cls.includes(strCluster) && rec.cls.includes(zoneCluster)) {
+        count++;
+        totalPL += rec.pL;
+      }
+    }
+    return { count, avgPL: count > 0 ? totalPL / count : 0 };
   }
 
   // --- Item/cluster management ---
@@ -558,13 +823,32 @@ export class LearningEngine {
     const key = this.config.itemKey(item);
     if (!this.items.has(key)) {
       const cls = this.config.itemClusters(item);
+
+      // 3a. Knowledge transfer: check global clusters for existing stats
+      let initialPL = 0.0;
+      const globalCls = cls.filter(c => c.startsWith('global_'));
+      if (globalCls.length > 0) {
+        let totalAcc = 0, count = 0;
+        for (const gcid of globalCls) {
+          const cl = this.clusters.get(gcid);
+          if (cl && cl.total >= 3) {
+            totalAcc += cl.correct / cl.total;
+            count++;
+          }
+        }
+        if (count > 0) {
+          const avgAcc = totalAcc / count;
+          initialPL = Math.min(0.3, avgAcc * 0.3);
+        }
+      }
+
       const rec = {
         key,
         S: 0,              // FSRS stability
         D: 5.0,            // FSRS difficulty
         lastReviewTs: 0,   // FSRS last review timestamp
         due: 0,            // FSRS due timestamp
-        pL: 0.0,           // BKT learned probability
+        pL: initialPL,     // BKT learned probability (may be boosted by knowledge transfer)
         attempts: 0,
         correct: 0,
         times: [],
@@ -629,6 +913,8 @@ export class LearningEngine {
         items: itemsObj,
         clusters: clustersObj,
         recentKeys: this.recentKeys,
+        theta: this.theta,
+        thetaHistory: this.thetaHistory,
       };
       localStorage.setItem(STORE_PREFIX + this.exerciseId, JSON.stringify(data));
     } catch (e) {
@@ -654,6 +940,8 @@ export class LearningEngine {
       this.totalAttempts = data.totalAttempts || 0;
       this.allCorrectTimes = data.allCorrectTimes || [];
       this.recentKeys = data.recentKeys || [];
+      this.theta = data.theta ?? 0.05;
+      this.thetaHistory = data.thetaHistory || [];
 
       // Restore items
       if (data.items) {
@@ -697,6 +985,7 @@ export class LearningEngine {
     this.totalAttempts = data.totalAttempts || 0;
     this.allCorrectTimes = data.allCorrectTimes || [];
     this.recentKeys = data.recentKeys || [];
+    this.theta = 0.05;
 
     if (data.items) {
       for (const [key, r] of Object.entries(data.items)) {

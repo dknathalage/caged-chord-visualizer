@@ -1,7 +1,9 @@
 import { NOTES } from '$lib/constants/music.js';
 import { NT_NATURAL, fretForNote, landmarkZone } from '$lib/music/fretboard.js';
 
-function buildItem(note, maxFret) {
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+function buildItem(note, maxFret = 15) {
   const frets = [];
   for (let s = 0; s < 6; s++) {
     const ff = fretForNote(s, note, maxFret);
@@ -23,7 +25,13 @@ function chromaticNeighbor(note, offset) {
 }
 
 export const stringTraversalConfig = {
-  initialParams: { maxFret: 10, naturalsOnly: true, timer: 0 },
+  itemDifficulty(item) {
+    const accidental = !NT_NATURAL.includes(item.note) ? 1 : 0;
+    const avgFret = item.frets.reduce((s, f) => s + f, 0) / item.frets.length;
+    const avgFretDist = avgFret / 15;
+    const hasHighFret = item.frets.some(f => f >= 10) ? 1 : 0;
+    return clamp(accidental * 0.3 + avgFretDist * 0.3 + hasHighFret * 0.2, 0, 1);
+  },
 
   itemKey(item) {
     return 'note_' + item.note;
@@ -38,97 +46,67 @@ export const stringTraversalConfig = {
     ];
   },
 
-  itemFromKey(key, params) {
-    const note = key.replace('note_', '');
-    return buildItem(note, params.maxFret);
+  globalClusters(item) {
+    return ['global_note_' + item.note];
   },
 
-  genRandom(params, lastItem) {
+  itemFromKey(key) {
+    const note = key.replace('note_', '');
+    return buildItem(note);
+  },
+
+  genRandom(lastItem) {
     const valid = [];
-    const pool = params.naturalsOnly ? NT_NATURAL : NOTES;
-    for (const n of pool) {
-      if (isPlayableOnAll(n, params.maxFret)) valid.push(n);
+    for (const n of NOTES) {
+      if (isPlayableOnAll(n, 15)) valid.push(n);
     }
     let pick;
     do {
       pick = valid[Math.floor(Math.random() * valid.length)];
     } while (lastItem && pick === lastItem.note && valid.length > 1);
-    return buildItem(pick, params.maxFret);
+    return buildItem(pick);
   },
 
-  genFromCluster(clusterId, params, lastItem) {
+  genFromCluster(clusterId, lastItem) {
     if (clusterId.startsWith('note_')) {
       const note = clusterId.replace('note_', '');
-      return buildItem(note, params.maxFret);
+      return buildItem(note);
     }
-    return this.genRandom(params, lastItem);
+    return this.genRandom(lastItem);
   },
 
-  microDrill(failedItem, params) {
+  microDrill(failedItem) {
     const drills = [];
     const below = chromaticNeighbor(failedItem.note, -1);
     const above = chromaticNeighbor(failedItem.note, 1);
 
-    if (isPlayableOnAll(below, params.maxFret)) {
-      drills.push(buildItem(below, params.maxFret));
-    }
-    if (isPlayableOnAll(above, params.maxFret)) {
-      drills.push(buildItem(above, params.maxFret));
-    }
+    if (isPlayableOnAll(below, 15)) drills.push(buildItem(below));
+    if (isPlayableOnAll(above, 15)) drills.push(buildItem(above));
 
-    // If we only got one direction, try two semitones in the other direction
     if (drills.length < 2) {
       const twoBelow = chromaticNeighbor(failedItem.note, -2);
       const twoAbove = chromaticNeighbor(failedItem.note, 2);
       if (drills.length === 0) {
-        // Neither neighbor worked, try further out
-        if (isPlayableOnAll(twoBelow, params.maxFret)) drills.push(buildItem(twoBelow, params.maxFret));
-        if (isPlayableOnAll(twoAbove, params.maxFret)) drills.push(buildItem(twoAbove, params.maxFret));
+        if (isPlayableOnAll(twoBelow, 15)) drills.push(buildItem(twoBelow));
+        if (isPlayableOnAll(twoAbove, 15)) drills.push(buildItem(twoAbove));
       } else if (drills[0].note === below) {
-        // Had below but not above, try two above
-        if (isPlayableOnAll(twoAbove, params.maxFret)) drills.push(buildItem(twoAbove, params.maxFret));
+        if (isPlayableOnAll(twoAbove, 15)) drills.push(buildItem(twoAbove));
       } else {
-        // Had above but not below, try two below
-        if (isPlayableOnAll(twoBelow, params.maxFret)) drills.push(buildItem(twoBelow, params.maxFret));
+        if (isPlayableOnAll(twoBelow, 15)) drills.push(buildItem(twoBelow));
       }
     }
 
     return drills.slice(0, 2);
   },
 
-  pickScaffold(item, weakCluster, params) {
+  pickScaffold(item, weakCluster) {
     if (weakCluster && weakCluster.startsWith('note_')) {
       const weakNote = weakCluster.replace('note_', '');
       const neighbor = chromaticNeighbor(weakNote, -1);
-      if (isPlayableOnAll(neighbor, params.maxFret)) {
-        return [buildItem(neighbor, params.maxFret)];
-      }
+      if (isPlayableOnAll(neighbor, 15)) return [buildItem(neighbor)];
       const neighborUp = chromaticNeighbor(weakNote, 1);
-      if (isPlayableOnAll(neighborUp, params.maxFret)) {
-        return [buildItem(neighborUp, params.maxFret)];
-      }
+      if (isPlayableOnAll(neighborUp, 15)) return [buildItem(neighborUp)];
     }
     return [];
-  },
-
-  adjustParams(params, dir, mag) {
-    const p = { ...params };
-
-    // Escalation order (harder): maxFret 10->12, naturalsOnly true->false, timer 0->45->15
-    if (dir > 0 && mag > 0.3) {
-      // Make harder
-      if (p.maxFret < 12) p.maxFret = 12;
-      else if (p.naturalsOnly) p.naturalsOnly = false;
-      else if (p.timer === 0) p.timer = 45;
-      else if (p.timer === 45) p.timer = 15;
-    } else if (dir < 0 && mag > 0.3) {
-      // Make easier
-      if (p.timer === 15) p.timer = 45;
-      else if (p.timer === 45) p.timer = 0;
-      else if (!p.naturalsOnly) p.naturalsOnly = true;
-      else if (p.maxFret > 10) p.maxFret = 10;
-    }
-
-    return p;
   }
 };

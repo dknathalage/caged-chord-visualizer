@@ -5,39 +5,60 @@ import { chordToneConfig } from './chordTone.js';
 import { chordPlayerConfig } from './chordPlayer.js';
 import { scaleRunnerConfig } from './scaleRunner.js';
 import { modeTrainerConfig } from './modeTrainer.js';
+import { chordTransitionConfig } from './chordTransition.js';
 
 export const TYPES = [
-  { id: 'nf', tier: 1, prereqs: [],     config: noteFindConfig,            name: 'Note Find' },
-  { id: 'st', tier: 2, prereqs: ['nf'], config: stringTraversalConfig,     name: 'String Traversal' },
-  { id: 'iv', tier: 3, prereqs: ['nf'], config: intervalTrainerConfig,     name: 'Interval' },
-  { id: 'ct', tier: 4, prereqs: ['iv'], config: chordToneConfig,           name: 'Chord Tone' },
-  { id: 'cp', tier: 5, prereqs: ['ct'], config: chordPlayerConfig,         name: 'Chord Player' },
-  { id: 'sr', tier: 6, prereqs: ['cp'], config: scaleRunnerConfig,         name: 'Scale Runner' },
-  { id: 'mt', tier: 7, prereqs: ['sr'], config: modeTrainerConfig,         name: 'Mode Trainer' },
+  { id: 'nf', config: noteFindConfig,            name: 'Note Find' },
+  { id: 'st', config: stringTraversalConfig,     name: 'String Traversal' },
+  { id: 'iv', config: intervalTrainerConfig,     name: 'Interval' },
+  { id: 'ct', config: chordToneConfig,           name: 'Chord Tone' },
+  { id: 'cp', config: chordPlayerConfig,         name: 'Chord Player' },
+  { id: 'sr', config: scaleRunnerConfig,         name: 'Scale Runner' },
+  { id: 'mt', config: modeTrainerConfig,         name: 'Mode Trainer' },
+  { id: 'cx', config: chordTransitionConfig,     name: 'Chord Transition' },
 ];
+
+// Global difficulty ranges per type — overlapping for smooth transitions
+const TYPE_DIFFICULTY = {
+  nf: { base: 0.00, span: 0.40 },
+  st: { base: 0.10, span: 0.35 },
+  iv: { base: 0.20, span: 0.35 },
+  ct: { base: 0.30, span: 0.30 },
+  cp: { base: 0.35, span: 0.35 },
+  sr: { base: 0.50, span: 0.35 },
+  mt: { base: 0.60, span: 0.40 },
+  cx: { base: 0.40, span: 0.40 },
+};
 
 // --- Helpers ---
 
-function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
-
 function computeTypeWeights(engine) {
+  const theta = engine?.theta ?? 0.05;
   const mastery = engine?.getMastery?.();
   const weights = {};
+  const window = 0.15;
+  const lo = theta - window;
+  const hi = theta + window;
+
   for (const t of TYPES) {
-    let prereqPL = 1.0;
-    if (t.prereqs.length > 0 && mastery) {
-      const prereqItems = mastery.items.filter(i => t.prereqs.some(p => i.key.startsWith(p + ':')));
-      prereqPL = prereqItems.length > 0 ? prereqItems.reduce((s, i) => s + i.pL, 0) / prereqItems.length : 0;
+    const td = TYPE_DIFFICULTY[t.id];
+    const typeHi = td.base + td.span;
+    // Overlap between [lo, hi] and [td.base, typeHi]
+    const overlap = Math.max(0, Math.min(hi, typeHi) - Math.max(lo, td.base));
+    let w = overlap / (2 * window);
+
+    // Weakness boost: types where student is weak get extra weight
+    if (mastery) {
+      const typeItems = mastery.items.filter(i => i.key.startsWith(t.id + ':'));
+      if (typeItems.length > 0) {
+        const typePL = typeItems.reduce((s, i) => s + i.pL, 0) / typeItems.length;
+        w *= (1 - typePL) * 0.5 + 0.5;
+      }
     }
-    const threshold = 0.3 + t.tier * 0.05;
-    let P = t.prereqs.length === 0 ? 1.0 : sigmoid(10 * (prereqPL - threshold));
-    if (P < 0.05 && P > 0.01) P = 0.05;
 
-    const typeItems = mastery?.items.filter(i => i.key.startsWith(t.id + ':')) ?? [];
-    const typePL = typeItems.length > 0 ? typeItems.reduce((s, i) => s + i.pL, 0) / typeItems.length : 0;
-    const weaknessBoost = typeItems.length > 0 ? (1 - typePL) * 0.5 + 0.5 : 1.0;
+    if (w > 0 && w < 0.05) w = 0.05;
 
-    weights[t.id] = P * weaknessBoost;
+    weights[t.id] = w;
   }
   return weights;
 }
@@ -61,10 +82,13 @@ function typeById(id) {
 // --- Unified config ---
 
 export const unifiedConfig = {
-  initialParams: {
-    _perType: Object.fromEntries(
-      TYPES.map(t => [t.id, structuredClone(t.config.initialParams)])
-    )
+  _isUnified: true,
+
+  itemDifficulty(item) {
+    const t = typeById(item._type);
+    const td = TYPE_DIFFICULTY[item._type];
+    const internalDiff = t.config.itemDifficulty(item._inner);
+    return td.base + internalDiff * td.span;
   },
 
   itemKey(item) {
@@ -74,78 +98,74 @@ export const unifiedConfig = {
 
   itemClusters(item) {
     const t = typeById(item._type);
-    return ['type_' + item._type, ...t.config.itemClusters(item._inner)];
+    const local = ['type_' + item._type, ...t.config.itemClusters(item._inner)];
+    const global = t.config.globalClusters?.(item._inner) || [];
+    return [...local, ...global];
   },
 
-  itemFromKey(key, params) {
+  itemFromKey(key) {
     const colonIdx = key.indexOf(':');
     const typeId = key.slice(0, colonIdx);
     const innerKey = key.slice(colonIdx + 1);
     const t = typeById(typeId);
-    const innerItem = t.config.itemFromKey(innerKey, params._perType[typeId]);
+    const innerItem = t.config.itemFromKey(innerKey);
     return { _type: typeId, _inner: innerItem };
   },
 
-  genRandom(params, lastItem, engine) {
+  getTypeIds() {
+    return TYPES.map(t => t.id);
+  },
+
+  genFromType(typeId, lastItem, engine) {
+    const t = typeById(typeId);
+    if (!t) return this.genRandom(lastItem, engine);
+    const innerLast = (lastItem && lastItem._type === typeId) ? lastItem._inner : null;
+    const innerItem = t.config.genRandom(innerLast);
+    return { _type: typeId, _inner: innerItem };
+  },
+
+  genRandom(lastItem, engine) {
     const weights = computeTypeWeights(engine);
     const typeId = weightedPick(weights);
     const t = typeById(typeId);
     const innerLast = (lastItem && lastItem._type === typeId) ? lastItem._inner : null;
-    const innerItem = t.config.genRandom(params._perType[typeId], innerLast);
+    const innerItem = t.config.genRandom(innerLast);
     return { _type: typeId, _inner: innerItem };
   },
 
-  genFromCluster(clusterId, params, lastItem) {
-    // type_ cluster: delegate to that type's genRandom
+  genFromCluster(clusterId, lastItem) {
     if (clusterId.startsWith('type_')) {
       const typeId = clusterId.slice(5);
       const t = typeById(typeId);
       if (t) {
         const innerLast = (lastItem && lastItem._type === typeId) ? lastItem._inner : null;
-        const innerItem = t.config.genRandom(params._perType[typeId], innerLast);
+        const innerItem = t.config.genRandom(innerLast);
         return { _type: typeId, _inner: innerItem };
       }
     }
 
-    // Non-type cluster: find the matching inner config
     for (const t of TYPES) {
-      // Try genFromCluster on each config; the correct one will produce a valid item
-      // We check if the config's genFromCluster handles this cluster pattern
       try {
         const innerLast = (lastItem && lastItem._type === t.id) ? lastItem._inner : null;
-        const innerItem = t.config.genFromCluster(clusterId, params._perType[t.id], innerLast);
+        const innerItem = t.config.genFromCluster(clusterId, innerLast);
         if (innerItem) return { _type: t.id, _inner: innerItem };
       } catch {
         // This config can't handle this cluster, try next
       }
     }
 
-    // Fallback: genRandom on first type
-    return this.genRandom(params, lastItem, null);
+    return this.genRandom(lastItem, null);
   },
 
-  microDrill(failedItem, params) {
+  microDrill(failedItem) {
     const t = typeById(failedItem._type);
-    const innerDrills = t.config.microDrill(failedItem._inner, params._perType[failedItem._type]);
+    const innerDrills = t.config.microDrill(failedItem._inner);
     return innerDrills.map(d => ({ _type: failedItem._type, _inner: d }));
   },
 
-  pickScaffold(item, weakCluster, params) {
+  pickScaffold(item, weakCluster) {
     const t = typeById(item._type);
-    const innerScaffolds = t.config.pickScaffold(item._inner, weakCluster, params._perType[item._type]);
+    const innerScaffolds = t.config.pickScaffold(item._inner, weakCluster);
     return innerScaffolds.map(s => ({ _type: item._type, _inner: s }));
-  },
-
-  adjustParams(params, dir, mag) {
-    const p = structuredClone(params);
-    for (const t of TYPES) {
-      const original = JSON.stringify(p._perType[t.id]);
-      const newSub = t.config.adjustParams(p._perType[t.id], dir, mag);
-      if (JSON.stringify(newSub) !== original) {
-        p._perType[t.id] = newSub;
-        return p;
-      }
-    }
-    return p;
   }
 };

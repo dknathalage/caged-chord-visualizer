@@ -19,6 +19,7 @@
   import ChordPlayer from '$lib/components/challenges/ChordPlayer.svelte';
   import ScaleRunner from '$lib/components/challenges/ScaleRunner.svelte';
   import ModeTrainer from '$lib/components/challenges/ModeTrainer.svelte';
+  import ChordTransition from '$lib/components/challenges/ChordTransition.svelte';
 
   // Run migration on mount
   migrateToUnified();
@@ -32,9 +33,6 @@
   let best = $state(0);
   let correct = $state(0);
   let attempts = $state(0);
-  let timerLeft = $state(0);
-  let timerRef = $state(null);
-
   // Current challenge
   let challengeType = $state(null);
   let curItem = $state(null);
@@ -100,6 +98,15 @@
   let mtFbSuccess = $state(false);
   let mtFbFlash = $state(false);
 
+  // ChordTransition state
+  let cxFromChallenge = $state(null);
+  let cxToChallenge = $state(null);
+  let cxPhase = $state('from');
+  let cxVoiceIdx = $state(0);
+  let cxVoiceDone = $state([]);
+  let cxFbSuccess = $state(false);
+  let cxFbFlash = $state(false);
+
   // Pitch display state
   let detectedNote = $state('\u2014');
   let detectedClass = $state('');
@@ -146,24 +153,6 @@
   let showActive = $derived(phase !== 'idle');
   let showReset = $derived(score > 0 || attempts > 0);
 
-  // --- Timer ---
-  function startTimer() {
-    clearTimer();
-    const d = engine.getParams();
-    const typeParams = d._perType?.[challengeType];
-    if (!typeParams?.timer) { timerLeft = 0; return; }
-    timerLeft = typeParams.timer;
-    timerRef = setInterval(() => {
-      timerLeft--;
-      if (timerLeft <= 0) { clearTimer(); onTimeout(); }
-    }, 1000);
-  }
-
-  function clearTimer() {
-    if (timerRef) { clearInterval(timerRef); timerRef = null; }
-    timerLeft = 0;
-  }
-
   // --- Detected display ---
   function showDetected(note, cents, hz, isCorrect) {
     if (!note) {
@@ -185,7 +174,6 @@
     if (streak === 5) pts += 20;
     if (streak === 10) pts += 50;
     score += pts;
-    clearTimer();
     return pts;
   }
 
@@ -262,9 +250,9 @@
       case 'cp': prepareChordPlayer(inner); break;
       case 'sr': prepareScaleRunner(inner); break;
       case 'mt': prepareModeTrainer(inner); break;
+      case 'cx': prepareChordTransition(inner); break;
     }
 
-    startTimer();
   }
 
   // --- Per-type preparation ---
@@ -344,15 +332,13 @@
   }
 
   function prepareScaleRunner(inner) {
-    const d = engine.getParams();
     const ri = inner.rootIdx;
     const root = NOTES[ri];
     const scale = SCALES.find(sc => sc.id === inner.scaleId);
     const startFret = inner.startFret;
     let seq = scaleSequence(ri, scale.iv, startFret, startFret + 4);
     if (seq.length < 5) { nextChallenge(); return; }
-    const typeDir = d._perType?.sr?.dir;
-    if (typeDir === 'updown') {
+    if (inner.dir === 'updown') {
       const desc = [...seq].reverse().slice(1);
       seq = [...seq, ...desc];
     }
@@ -366,15 +352,13 @@
   }
 
   function prepareModeTrainer(inner) {
-    const d = engine.getParams();
     const ri = inner.rootIdx;
     const root = NOTES[ri];
     const mode = MODES.find(m => m.id === inner.modeId);
     const startFret = inner.startFret;
     let seq = scaleSequence(ri, mode.iv, startFret, startFret + 4);
     if (seq.length < 5) { nextChallenge(); return; }
-    const typeDir = d._perType?.mt?.dir;
-    if (typeDir === 'updown') {
+    if (inner.dir === 'updown') {
       const desc = [...seq].reverse().slice(1);
       seq = [...seq, ...desc];
     }
@@ -385,6 +369,37 @@
     mtFbHtml = renderSeqFB(seq, 0, startFret);
     const t = seq[0];
     msgText = `Play ${root} ${mode.name}: start with ${t.note} (${NT_STR_NAMES[t.str]} fret ${t.fret})`; msgErr = false;
+  }
+
+  function prepareChordTransition(inner) {
+    const { fromShapeId, fromTypeId, fromRootIdx, toShapeId, toTypeId, toRootIdx } = inner;
+
+    function resolveChord(shapeId, typeId, rootIdx) {
+      const sh = STD_SHAPES.find(s => s.id === shapeId);
+      const ct = CFG.chordTypes.find(c => c.id === typeId);
+      const root = NOTES[rootIdx];
+      const adapted = adaptShape(sh);
+      const r = resolve(adapted, rootIdx, ct.iv);
+      if (r.voices.length < 3) return null;
+      const sortedVoices = [...r.voices].sort((a, b) => a.str - b.str);
+      const color = STD_COLORS[sh.id] || '#58A6FF';
+      const dHtml = renderDiagram(r, color);
+      const chordName = root + (ct.sym || '');
+      return { root, chordType: ct, shape: sh, resolved: r, sortedVoices, diagramHtml: dHtml, chordName, color, shapeName: sh.label };
+    }
+
+    const from = resolveChord(fromShapeId, fromTypeId, fromRootIdx);
+    const to = resolveChord(toShapeId, toTypeId, toRootIdx);
+    if (!from || !to) { nextChallenge(); return; }
+
+    cxFromChallenge = from;
+    cxToChallenge = to;
+    cxPhase = 'from';
+    cxVoiceIdx = 0;
+    cxVoiceDone = from.sortedVoices.map(() => false);
+    cxFbSuccess = false; cxFbFlash = false;
+    const firstVoice = from.sortedVoices[0];
+    msgText = `Play ${from.chordName}: ${firstVoice.note} on ${NT_STR_NAMES[firstVoice.str]}`; msgErr = false;
   }
 
   // --- Detection dispatch ---
@@ -398,6 +413,7 @@
       case 'cp': detectChordPlayer(note, cents, hz, semi); break;
       case 'sr': detectScaleRunner(note, cents, hz, semi); break;
       case 'mt': detectModeTrainer(note, cents, hz, semi); break;
+      case 'cx': detectChordTransition(note, cents, hz, semi); break;
     }
   }
 
@@ -547,6 +563,47 @@
     });
   }
 
+  function detectChordTransition(note, cents, hz, semi) {
+    const activeChallenge = cxPhase === 'from' ? cxFromChallenge : cxToChallenge;
+    if (!activeChallenge) return;
+    const voice = activeChallenge.sortedVoices[cxVoiceIdx];
+    if (!voice) return;
+    const expMidi = BASE_MIDI[voice.str] + activeChallenge.resolved.bf + voice.fo;
+    const nm = note === voice.note;
+    const midiOk = Math.abs(semi + 69 - expMidi) <= 1;
+    const ok = nm && midiOk;
+    showDetected(note, cents, hz, ok);
+    if (nm && !midiOk && phase === 'listening') { msgText = `Right note, play on ${NT_STR_NAMES[voice.str]} string!`; msgErr = true; }
+    checkHold(ok, () => {
+      cxVoiceDone[cxVoiceIdx] = true; cxVoiceDone = [...cxVoiceDone];
+      cxFbSuccess = true; cxFbFlash = true;
+      setTimeout(() => { cxFbSuccess = false; cxFbFlash = false; }, 600);
+      cxVoiceIdx++; holdStart = 0;
+
+      if (cxVoiceIdx >= activeChallenge.sortedVoices.length) {
+        if (cxPhase === 'from') {
+          // Move to second chord
+          cxPhase = 'to';
+          cxVoiceIdx = 0;
+          cxVoiceDone = cxToChallenge.sortedVoices.map(() => false);
+          cxFbSuccess = false; cxFbFlash = false;
+          const firstVoice = cxToChallenge.sortedVoices[0];
+          msgText = `Now play ${cxToChallenge.chordName}: ${firstVoice.note} on ${NT_STR_NAMES[firstVoice.str]}`; msgErr = false;
+        } else {
+          // Both chords complete
+          engine.report(curItem, true, performance.now() - qStartTime);
+          const pts = scoreCorrect(40, 3);
+          msgText = `+${pts} points! Transition complete!`; msgErr = false;
+          cxFbSuccess = true; cxFbFlash = true;
+          setTimeout(() => { cxFbSuccess = false; cxFbFlash = false; if (phase === 'success') nextChallenge(); }, 1200);
+        }
+      } else {
+        const nextVoice = activeChallenge.sortedVoices[cxVoiceIdx];
+        msgText = `Now play ${nextVoice.note} on ${NT_STR_NAMES[nextVoice.str]}`; msgErr = false;
+      }
+    });
+  }
+
   // --- Flow functions ---
   function onSilence() { showDetected(null); holdStart = 0; }
 
@@ -563,23 +620,14 @@
     engine.report(curItem, false, undefined, { detected: lastDetected });
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
-    clearTimer();
     msgText = 'Skipped'; msgErr = true;
     setTimeout(() => nextChallenge(), 1000);
-  }
-
-  function onTimeout() {
-    engine.report(curItem, false, undefined, { detected: lastDetected });
-    streak = 0; attempts++;
-    score = Math.max(0, score - 5);
-    msgText = "Time's up!"; msgErr = true;
-    setTimeout(() => { if (phase === 'listening') nextChallenge(); }, 1000);
   }
 
   function onStop() {
     engine.save();
     saveExercise('practice', { bestScore: score, bestAccuracy: attempts > 0 ? Math.round(correct / attempts * 100) : 0 });
-    phase = 'idle'; audio.stop(); clearTimer();
+    phase = 'idle'; audio.stop();
     showDetected(null);
     refreshMastery();
     msgText = 'Stopped. Press Start to resume.'; msgErr = false;
@@ -598,7 +646,7 @@
   // Init mastery on mount
   refreshMastery();
 
-  onDestroy(() => { engine.save(); audio.stop(); clearTimer(); });
+  onDestroy(() => { engine.save(); audio.stop(); });
 </script>
 
 <svelte:head>
@@ -649,8 +697,6 @@
       {#if challengeType}
         <div class="type-badge">{TYPES.find(t => t.id === challengeType)?.name ?? ''}</div>
       {/if}
-      <div class="nt-timer">{timerLeft > 0 ? timerLeft : ''}</div>
-
       <!-- Challenge display: switch on type -->
       {#if challengeType === 'nf'}
         <NoteFind target={nfTarget} fbHtml={nfFbHtml} fbSuccess={nfFbSuccess} fbFlash={nfFbFlash} {recall} />
@@ -666,6 +712,8 @@
         <ScaleRunner challenge={srChallenge} noteIdx={srNoteIdx} fbHtml={srFbHtml} fbVisible={srFbVisible} fbSuccess={srFbSuccess} fbFlash={srFbFlash} />
       {:else if challengeType === 'mt'}
         <ModeTrainer challenge={mtChallenge} noteIdx={mtNoteIdx} fbHtml={mtFbHtml} fbVisible={mtFbVisible} fbSuccess={mtFbSuccess} fbFlash={mtFbFlash} />
+      {:else if challengeType === 'cx'}
+        <ChordTransition fromChallenge={cxFromChallenge} toChallenge={cxToChallenge} phase={cxPhase} voiceIdx={cxVoiceIdx} voiceDone={cxVoiceDone} fbSuccess={cxFbSuccess} fbFlash={cxFbFlash} />
       {/if}
 
       <PitchDisplay {detectedNote} {detectedClass} {centsLbl} {centsLeft} {hzText} />
@@ -706,7 +754,6 @@
   .nt-btn:hover{border-color:#555;color:var(--tx)}
   .nt-btn.nt-primary{border-color:var(--ac);color:var(--ac);background:rgba(88,166,255,.1)}
   .nt-btn.nt-danger{border-color:#FF6B6B;color:#FF6B6B;background:rgba(255,107,107,.08)}
-  .nt-timer{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#FF6B6B;text-align:center;min-height:30px}
   .nt-msg{text-align:center;font-size:14px;color:var(--mt);min-height:20px}
   .nt-msg.nt-err{color:#FF6B6B}
   @keyframes nt-glow{0%{box-shadow:0 0 20px rgba(78,203,113,.4)}100%{box-shadow:none}}

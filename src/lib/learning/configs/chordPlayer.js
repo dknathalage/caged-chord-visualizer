@@ -2,8 +2,18 @@ import { NOTES } from '$lib/constants/music.js';
 import { STD_SHAPES, adaptShape, getBf } from '$lib/music/chords.js';
 import { landmarkZone } from '$lib/music/fretboard.js';
 
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+const SHAPE_COMPLEXITY = { e: 0.1, a: 0.15, d: 0.2, c: 0.35, g: 0.4 };
+const TYPE_COMPLEXITY = { maj: 0.0, min: 0.05, '7': 0.2, maj7: 0.2, m7: 0.25, dim: 0.3, aug: 0.3, sus2: 0.15, sus4: 0.15 };
+const ALL_TYPES = ['maj', 'min', '7', 'maj7', 'm7'];
+
 export const chordPlayerConfig = {
-  initialParams: { shapes: ['e', 'a', 'd'], types: ['maj', 'min'], timer: 0 },
+  itemDifficulty(item) {
+    const sc = SHAPE_COMPLEXITY[item.shapeId] || 0.3;
+    const tc = TYPE_COMPLEXITY[item.typeId] || 0.2;
+    return clamp(sc + tc, 0, 1);
+  },
 
   itemKey(item) {
     return item.shapeId + '_' + item.typeId + '_' + item.rootIdx;
@@ -21,7 +31,11 @@ export const chordPlayerConfig = {
     ];
   },
 
-  itemFromKey(key, params) {
+  globalClusters(item) {
+    return ['global_root_' + NOTES[item.rootIdx], 'global_shape_' + item.shapeId];
+  },
+
+  itemFromKey(key) {
     const parts = key.split('_');
     const shapeId = parts[0];
     const rootIdx = parseInt(parts[parts.length - 1], 10);
@@ -29,70 +43,60 @@ export const chordPlayerConfig = {
     return { shapeId, typeId, rootIdx };
   },
 
-  genRandom(params, lastItem) {
-    const allowedShapes = STD_SHAPES.filter(s => params.shapes.includes(s.id));
-    const sh = allowedShapes[Math.floor(Math.random() * allowedShapes.length)];
-    const typeId = params.types[Math.floor(Math.random() * params.types.length)];
+  genRandom(lastItem) {
+    const sh = STD_SHAPES[Math.floor(Math.random() * STD_SHAPES.length)];
+    const typeId = ALL_TYPES[Math.floor(Math.random() * ALL_TYPES.length)];
     const rootIdx = Math.floor(Math.random() * 12);
     return { shapeId: sh.id, typeId, rootIdx };
   },
 
-  genFromCluster(clusterId, params, lastItem) {
+  genFromCluster(clusterId, lastItem) {
     if (clusterId.startsWith('shape_')) {
       const shapeId = clusterId.slice(6);
-      if (params.shapes.includes(shapeId)) {
-        const typeId = params.types[Math.floor(Math.random() * params.types.length)];
-        const rootIdx = Math.floor(Math.random() * 12);
-        return { shapeId, typeId, rootIdx };
-      }
+      const typeId = ALL_TYPES[Math.floor(Math.random() * ALL_TYPES.length)];
+      const rootIdx = Math.floor(Math.random() * 12);
+      return { shapeId, typeId, rootIdx };
     }
 
     if (clusterId.startsWith('type_')) {
       const typeId = clusterId.slice(5);
-      if (params.types.includes(typeId)) {
-        const allowedShapes = STD_SHAPES.filter(s => params.shapes.includes(s.id));
-        const sh = allowedShapes[Math.floor(Math.random() * allowedShapes.length)];
-        const rootIdx = Math.floor(Math.random() * 12);
-        return { shapeId: sh.id, typeId, rootIdx };
-      }
+      const sh = STD_SHAPES[Math.floor(Math.random() * STD_SHAPES.length)];
+      const rootIdx = Math.floor(Math.random() * 12);
+      return { shapeId: sh.id, typeId, rootIdx };
     }
 
     if (clusterId.startsWith('root_')) {
       const rootName = clusterId.slice(5);
       const rootIdx = NOTES.indexOf(rootName);
       if (rootIdx >= 0) {
-        const allowedShapes = STD_SHAPES.filter(s => params.shapes.includes(s.id));
-        const sh = allowedShapes[Math.floor(Math.random() * allowedShapes.length)];
-        const typeId = params.types[Math.floor(Math.random() * params.types.length)];
+        const sh = STD_SHAPES[Math.floor(Math.random() * STD_SHAPES.length)];
+        const typeId = ALL_TYPES[Math.floor(Math.random() * ALL_TYPES.length)];
         return { shapeId: sh.id, typeId, rootIdx };
       }
     }
 
     if (clusterId.startsWith('zone_')) {
-      const allowedShapes = STD_SHAPES.filter(s => params.shapes.includes(s.id));
-      const sh = allowedShapes[Math.floor(Math.random() * allowedShapes.length)];
-      const typeId = params.types[Math.floor(Math.random() * params.types.length)];
+      const sh = STD_SHAPES[Math.floor(Math.random() * STD_SHAPES.length)];
+      const typeId = ALL_TYPES[Math.floor(Math.random() * ALL_TYPES.length)];
       const rootIdx = Math.floor(Math.random() * 12);
       return { shapeId: sh.id, typeId, rootIdx };
     }
 
-    return this.genRandom(params, lastItem);
+    return this.genRandom(lastItem);
   },
 
-  microDrill(failedItem, params) {
-    // 1. Same shape, major type (simplest quality)
+  microDrill(failedItem) {
     const drill1 = { shapeId: failedItem.shapeId, typeId: 'maj', rootIdx: failedItem.rootIdx };
-    // 2. Same type, E shape (easiest shape)
     const drill2 = { shapeId: 'e', typeId: failedItem.typeId, rootIdx: failedItem.rootIdx };
     return [drill1, drill2];
   },
 
-  pickScaffold(item, weakCluster, params) {
+  pickScaffold(item, weakCluster) {
     if (!weakCluster) return [];
 
     if (weakCluster.startsWith('shape_')) {
-      // Same root + type, different shape
-      const otherShapes = params.shapes.filter(id => id !== item.shapeId);
+      const allShapeIds = STD_SHAPES.map(s => s.id);
+      const otherShapes = allShapeIds.filter(id => id !== item.shapeId);
       if (otherShapes.length > 0) {
         const newShapeId = otherShapes[Math.floor(Math.random() * otherShapes.length)];
         return [{ shapeId: newShapeId, typeId: item.typeId, rootIdx: item.rootIdx }];
@@ -101,8 +105,7 @@ export const chordPlayerConfig = {
     }
 
     if (weakCluster.startsWith('type_')) {
-      // Same shape + root, different type
-      const otherTypes = params.types.filter(id => id !== item.typeId);
+      const otherTypes = ALL_TYPES.filter(id => id !== item.typeId);
       if (otherTypes.length > 0) {
         const newTypeId = otherTypes[Math.floor(Math.random() * otherTypes.length)];
         return [{ shapeId: item.shapeId, typeId: newTypeId, rootIdx: item.rootIdx }];
@@ -111,40 +114,5 @@ export const chordPlayerConfig = {
     }
 
     return [];
-  },
-
-  adjustParams(params, dir, mag) {
-    const p = structuredClone(params);
-    if (mag <= 0.3) return p;
-
-    // Difficulty levels:
-    // Level 1: shapes ['e','a','d'], types ['maj','min'], timer 0
-    // Level 2: shapes all CAGED, types ['maj','min'], timer 0
-    // Level 3: all shapes, types ['maj','min','7','maj7','m7'], timer 0
-    // Then timer: 0 -> 30 -> 15
-
-    const level1Shapes = ['e', 'a', 'd'];
-    const level2Shapes = ['e', 'a', 'd', 'c', 'g'];
-    const level1Types = ['maj', 'min'];
-    const level3Types = ['maj', 'min', '7', 'maj7', 'm7'];
-
-    const shapeLevel = p.shapes.length <= 3 ? 1 : 2;
-    const typeLevel = p.types.length <= 2 ? 1 : 2;
-
-    if (dir > 0) {
-      // Harder
-      if (shapeLevel === 1) { p.shapes = level2Shapes; }
-      else if (typeLevel === 1) { p.types = level3Types; }
-      else if (p.timer === 0) { p.timer = 30; }
-      else if (p.timer > 15) { p.timer = 15; }
-    } else {
-      // Easier
-      if (p.timer > 0 && p.timer <= 15) { p.timer = 30; }
-      else if (p.timer > 0) { p.timer = 0; }
-      else if (typeLevel === 2) { p.types = level1Types; }
-      else if (shapeLevel === 2) { p.shapes = level1Shapes; }
-    }
-
-    return p;
   }
 };

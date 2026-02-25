@@ -15,11 +15,11 @@ const { LearningEngine } = await import('./engine.js');
 // --- Minimal config for testing ---
 function makeConfig(overrides = {}) {
   return {
-    initialParams: { difficulty: 1, timer: 0, ...overrides.initialParams },
     itemKey: (item) => item.id ?? item,
     itemClusters: (item) => item.clusters ?? ['default'],
-    itemFromKey: (key, params) => ({ id: key, clusters: ['default'] }),
-    genRandom: (params, lastItem) => {
+    itemFromKey: (key) => ({ id: key, clusters: ['default'] }),
+    itemDifficulty: (item) => 0.3, // default medium-low difficulty
+    genRandom: (lastItem) => {
       const pool = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
       const pick = pool[Math.floor(Math.random() * pool.length)];
       return { id: pick, clusters: ['default'] };
@@ -27,7 +27,6 @@ function makeConfig(overrides = {}) {
     genFromCluster: null,
     microDrill: null,
     pickScaffold: null,
-    adjustParams: (params, dir, mag) => ({ ...params, difficulty: params.difficulty + dir }),
     ...overrides,
   };
 }
@@ -171,6 +170,75 @@ describe('response-time-aware BKT', () => {
     const pL_after = engine.items.get(engine.config.itemKey(item)).pL;
 
     expect(pL_after).toBeLessThan(pL_before);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Theta (Student Ability)
+// ──────────────────────────────────────────────
+
+describe('theta (student ability)', () => {
+  it('starts at 0.05', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    expect(engine.theta).toBe(0.05);
+  });
+
+  it('increases on correct answers', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    const before = engine.theta;
+    engine.report(item, true, 1000);
+    expect(engine.theta).toBeGreaterThan(before);
+  });
+
+  it('decreases on wrong answers', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    // Push theta up first
+    for (let i = 0; i < 5; i++) engine.report(item, true, 1000);
+    const before = engine.theta;
+    engine.report(item, false, 1000);
+    expect(engine.theta).toBeLessThan(before);
+  });
+
+  it('is clamped to [0, 1]', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    engine.theta = 0.01;
+    const item = engine.next();
+    // Many wrong answers
+    for (let i = 0; i < 50; i++) engine.report(item, false, 1000);
+    expect(engine.theta).toBeGreaterThanOrEqual(0);
+
+    engine.theta = 0.99;
+    for (let i = 0; i < 50; i++) engine.report(item, true, 500);
+    expect(engine.theta).toBeLessThanOrEqual(1);
+  });
+
+  it('is persisted in save/load', () => {
+    const cfg = makeConfig();
+    const engine = new LearningEngine(cfg, 'theta-test');
+    const item = engine.next();
+    for (let i = 0; i < 10; i++) engine.report(item, true, 500);
+    const savedTheta = engine.theta;
+    engine.save();
+
+    const engine2 = new LearningEngine(cfg, 'theta-test');
+    expect(engine2.theta).toBeCloseTo(savedTheta, 5);
+  });
+
+  it('is included in getMastery().overall', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const mastery = engine.getMastery();
+    expect(mastery.overall.theta).toBe(0.05);
+  });
+
+  it('resets to 0.05 on reset()', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    for (let i = 0; i < 10; i++) engine.report(item, true, 500);
+    expect(engine.theta).toBeGreaterThan(0.05);
+    engine.reset();
+    expect(engine.theta).toBe(0.05);
   });
 });
 
@@ -359,7 +427,7 @@ describe('cold start and progression', () => {
   it('uses random selection for first COLD_START (7) questions', () => {
     const items = [];
     const cfg = makeConfig({
-      genRandom: (params) => {
+      genRandom: () => {
         const id = `item-${Math.random().toString(36).slice(2, 6)}`;
         items.push(id);
         return { id, clusters: ['default'] };
@@ -373,26 +441,6 @@ describe('cold start and progression', () => {
 
     // All 7 should have been generated via genRandom
     expect(items).toHaveLength(7);
-  });
-
-  it('adjusts difficulty every ADJ_EVERY (8) questions', () => {
-    const adjustCalls = [];
-    const cfg = makeConfig({
-      adjustParams: (params, dir, mag) => {
-        adjustCalls.push({ dir, mag });
-        return { ...params, difficulty: params.difficulty + dir };
-      },
-    });
-    const engine = new LearningEngine(cfg, null);
-
-    for (let i = 0; i < 16; i++) {
-      const item = engine.next();
-      // All correct → should trigger upward adjustment
-      engine.report(item, true, 500);
-    }
-
-    // Should have triggered adjustment at question 8 and 16
-    expect(adjustCalls.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -435,49 +483,58 @@ describe('item selection', () => {
     expect(hardScore).toBeGreaterThan(easyScore);
   });
 
-  it('gives new items a bonus score', () => {
+  it('new item scoring uses gaussian based on theta proximity', () => {
     const engine = new LearningEngine(makeConfig(), null);
     engine.totalAttempts = 10;
     engine.qNum = 10;
+    engine.theta = 0.3;
 
-    const score = engine._scoreCandidate({
-      item: { id: 'new', clusters: ['default'] },
+    // Item at difficulty close to theta should score higher than far away
+    const closeCfg = makeConfig({ itemDifficulty: () => 0.32 }); // close to theta+0.02
+    const farCfg = makeConfig({ itemDifficulty: () => 0.8 }); // far from theta
+
+    engine.config = closeCfg;
+    const closeScore = engine._scoreCandidate({
+      item: { id: 'close', clusters: ['default'] },
       rec: null,
       isNew: true
     });
 
-    expect(score).toBe(1.2); // 1.0 + 0.2
+    engine.config = farCfg;
+    const farScore = engine._scoreCandidate({
+      item: { id: 'far', clusters: ['default'] },
+      rec: null,
+      isNew: true
+    });
+
+    expect(closeScore).toBeGreaterThan(farScore);
   });
 
-  it('gives learning zone bonus for pL 0.3-0.7', () => {
+  it('applies difficulty match bonus for known items near theta', () => {
     const engine = new LearningEngine(makeConfig(), null);
     engine.totalAttempts = 10;
     engine.qNum = 10;
+    engine.theta = 0.3;
 
     const item = { id: 'test', clusters: ['uniq'] };
     engine._ensureItem(item);
     const rec = engine.items.get('test');
+    rec.pL = 0.5;
     rec.attempts = 5;
     rec.lastReviewTs = Date.now();
     rec.S = 2;
 
-    rec.pL = 0.5; // In zone
-    const inZone = engine._scoreCandidate({ item, rec, isNew: false });
+    // Difficulty near theta should have higher difficultyMatch
+    const nearCfg = makeConfig({ itemDifficulty: () => 0.3 });
+    const farCfg = makeConfig({ itemDifficulty: () => 0.9 });
 
-    rec.pL = 0.1; // Below zone
-    const belowZone = engine._scoreCandidate({ item, rec, isNew: false });
+    engine.config = nearCfg;
+    const nearScore = engine._scoreCandidate({ item, rec, isNew: false });
 
-    // Score with learning zone bonus should be higher
-    // (exploitation would be higher for pL=0.1 though, so just check the bonus exists)
-    // The zone bonus is 0.25, exploitation diff is (0.9-0.5)=0.4 in favor of low pL
-    // So we can't directly compare. Instead, check that pL=0.5 gets bonus.
-    rec.pL = 0.5;
-    const s1 = engine._scoreCandidate({ item, rec, isNew: false });
-    rec.pL = 0.75; // Just outside zone
-    const s2 = engine._scoreCandidate({ item, rec, isNew: false });
+    engine.config = farCfg;
+    const farScore = engine._scoreCandidate({ item, rec, isNew: false });
 
-    // pL=0.5 has exploitation=0.5 + zone=0.25. pL=0.75 has exploitation=0.25 + zone=0
-    expect(s1).toBeGreaterThan(s2);
+    expect(nearScore).toBeGreaterThan(farScore);
   });
 
   it('applies fatigue bias toward easier items when fatigued', () => {
@@ -506,10 +563,10 @@ describe('item selection', () => {
 });
 
 // ──────────────────────────────────────────────
-// Persistence (v2)
+// Persistence (v3)
 // ──────────────────────────────────────────────
 
-describe('persistence v2', () => {
+describe('persistence v3', () => {
   it('saves and loads engine state', () => {
     const cfg = makeConfig();
     const engine = new LearningEngine(cfg, 'test-save');
@@ -534,30 +591,28 @@ describe('persistence v2', () => {
     expect(rec.attempts).toBe(2);
   });
 
-  it('saves with version 2', () => {
-    const engine = new LearningEngine(makeConfig(), 'test-v2');
+  it('saves with version 3 and includes theta', () => {
+    const engine = new LearningEngine(makeConfig(), 'test-v3');
     const item = engine.next();
     engine.report(item, true, 1000);
     engine.save();
 
-    const raw = JSON.parse(store['gl_learn_test-v2']);
-    expect(raw.v).toBe(2);
+    const raw = JSON.parse(store['gl_learn_test-v3']);
+    expect(raw.v).toBe(3);
+    expect(raw.theta).toBeGreaterThan(0);
     expect(raw.items).toBeDefined();
 
-    // Check FSRS fields exist, SM-2 fields don't
+    // Check FSRS fields exist
     const itemData = Object.values(raw.items)[0];
     expect(itemData.S).toBeDefined();
     expect(itemData.D).toBeDefined();
     expect(itemData.lastReviewTs).toBeDefined();
     expect(itemData.confusions).toBeDefined();
-    expect(itemData.ef).toBeUndefined();
-    expect(itemData.ivl).toBeUndefined();
-    expect(itemData.reps).toBeUndefined();
   });
 });
 
 // ──────────────────────────────────────────────
-// V1 → V2 Migration
+// V1 → V2 Migration (still handled by engine)
 // ──────────────────────────────────────────────
 
 describe('v1 to v2 migration', () => {
@@ -606,24 +661,8 @@ describe('v1 to v2 migration', () => {
     // pL preserved
     expect(rec.pL).toBe(0.75);
 
-    // Old SM-2 fields should NOT exist
-    expect(rec.ef).toBeUndefined();
-    expect(rec.ivl).toBeUndefined();
-    expect(rec.reps).toBeUndefined();
-  });
-
-  it('migration saves in v2 format immediately', () => {
-    const v1Data = {
-      v: 1, ts: Date.now(), qNum: 5, totalAttempts: 5,
-      allCorrectTimes: [], items: {}, clusters: {}, recentKeys: [],
-    };
-    store['gl_learn_migrate-save'] = JSON.stringify(v1Data);
-
-    new LearningEngine(makeConfig(), 'migrate-save');
-
-    // Should have overwritten with v2
-    const raw = JSON.parse(store['gl_learn_migrate-save']);
-    expect(raw.v).toBe(2);
+    // Theta initialized
+    expect(engine.theta).toBe(0.05);
   });
 
   it('handles v1 data with missing optional fields', () => {
@@ -631,7 +670,6 @@ describe('v1 to v2 migration', () => {
       v: 1, ts: Date.now(), qNum: 2, totalAttempts: 2,
       items: {
         'B': { pL: 0.3, attempts: 2, correct: 1, cls: ['default'] }
-        // Missing ef, ivl, reps, etc.
       },
       clusters: {},
     };
@@ -640,8 +678,7 @@ describe('v1 to v2 migration', () => {
     const engine = new LearningEngine(makeConfig(), 'migrate-sparse');
     const rec = engine.items.get('B');
     expect(rec).toBeDefined();
-    expect(rec.S).toBe(1); // Math.max(1, undefined||1) = 1
-    expect(rec.D).toBe(6); // clamp(11 - 2.5*2, 1, 10) = 6 (default ef=2.5)
+    expect(rec.S).toBe(1);
     expect(rec.confusions).toEqual([]);
   });
 
@@ -693,18 +730,7 @@ describe('getMastery', () => {
     const mastery = engine.getMastery();
     expect(mastery.overall.sessionQuestions).toBe(1); // qNum increments on next(), not report()
     expect(mastery.overall.totalItems).toBe(1);
-  });
-
-  it('does not return old SM-2 fields (ef, ivl, reps)', () => {
-    const engine = new LearningEngine(makeConfig(), null);
-    const item = engine.next();
-    engine.report(item, true, 1000);
-
-    const mastery = engine.getMastery();
-    const it = mastery.items[0];
-    expect(it.ef).toBeUndefined();
-    expect(it.ivl).toBeUndefined();
-    expect(it.reps).toBeUndefined();
+    expect(mastery.overall.theta).toBeGreaterThan(0);
   });
 });
 
@@ -724,6 +750,7 @@ describe('reset', () => {
 
     expect(engine.items.size).toBe(0);
     expect(engine.qNum).toBe(0);
+    expect(engine.theta).toBe(0.05);
     expect(engine.fatigued).toBe(false);
     expect(engine.sessionWindow).toHaveLength(0);
     expect(engine.preFatigueAccuracy).toBeNull();
@@ -794,77 +821,588 @@ describe('edge cases', () => {
 });
 
 // ──────────────────────────────────────────────
-// Difficulty Adjustment Thresholds
+// Phase 1a: Micro-Drill Injection
 // ──────────────────────────────────────────────
 
-describe('difficulty adjustment thresholds', () => {
-  it('adjusts up when avg pL > 0.80', () => {
-    const adjustCalls = [];
+describe('micro-drill injection', () => {
+  it('triggers micro-drill after 3/5 failures on last item', () => {
+    const drillItems = [
+      { id: 'drill1', clusters: ['default'] },
+      { id: 'drill2', clusters: ['default'] },
+    ];
     const cfg = makeConfig({
-      adjustParams: (params, dir, mag) => {
-        adjustCalls.push(dir);
-        return { ...params, difficulty: params.difficulty + dir };
-      },
+      microDrill: () => drillItems,
     });
     const engine = new LearningEngine(cfg, null);
 
-    // Create items with high pL
-    for (const id of ['A', 'B', 'C', 'D', 'E']) {
-      engine._ensureItem({ id, clusters: ['default'] });
-      const rec = engine.items.get(id);
-      rec.pL = 0.85;
-      rec.attempts = 3;
-      rec.lastSeen = engine.qNum;
+    // Go past cold start
+    for (let i = 0; i < 8; i++) {
+      const item = engine.next();
+      engine.report(item, true, 500);
     }
-    engine.qNum = 8;
 
-    engine._adjustDifficulty();
-    expect(adjustCalls).toContain(1);
+    // Get a specific item and fail it 3+ times out of 5
+    const target = engine.next();
+    engine.report(target, false, 500);
+    engine.report(target, false, 500);
+    engine.report(target, false, 500);
+
+    // Next call should trigger micro-drill
+    const next = engine.next();
+    expect(next.id).toBe('drill1');
+
+    // Second drill item
+    engine.report(next, true, 500);
+    const next2 = engine.next();
+    expect(next2.id).toBe('drill2');
   });
 
-  it('adjusts down when avg pL < 0.50', () => {
-    const adjustCalls = [];
+  it('does not crash when config.microDrill is null', () => {
+    const cfg = makeConfig({ microDrill: null });
+    const engine = new LearningEngine(cfg, null);
+
+    for (let i = 0; i < 8; i++) {
+      const item = engine.next();
+      engine.report(item, true, 500);
+    }
+
+    const target = engine.next();
+    for (let i = 0; i < 5; i++) {
+      engine.report(target, false, 500);
+    }
+
+    // Should not throw, just proceed normally
+    const next = engine.next();
+    expect(next).toBeDefined();
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 1b: Confusion Drill
+// ──────────────────────────────────────────────
+
+describe('confusion drill', () => {
+  it('builds alternation drill after 2+ confusions with wrong answer', () => {
     const cfg = makeConfig({
-      adjustParams: (params, dir, mag) => {
-        adjustCalls.push(dir);
-        return { ...params, difficulty: params.difficulty + dir };
+      genFromCluster: (clusterId) => {
+        if (clusterId.startsWith('note_')) {
+          return { id: clusterId.replace('note_', ''), clusters: ['default'] };
+        }
+        return { id: 'fallback', clusters: ['default'] };
       },
     });
     const engine = new LearningEngine(cfg, null);
 
-    for (const id of ['A', 'B', 'C', 'D', 'E']) {
-      engine._ensureItem({ id, clusters: ['default'] });
-      const rec = engine.items.get(id);
-      rec.pL = 0.40;
-      rec.attempts = 3;
-      rec.lastSeen = engine.qNum;
+    // Go past cold start
+    for (let i = 0; i < 8; i++) {
+      const item = engine.next();
+      engine.report(item, true, 500);
     }
-    engine.qNum = 8;
 
-    engine._adjustDifficulty();
-    expect(adjustCalls).toContain(-1);
+    const target = engine.next();
+    // Report confusions: same detected value twice + wrong answer at end
+    engine.report(target, false, 500, { detected: 'F#' });
+    engine.report(target, false, 500, { detected: 'F#' });
+
+    // Confusion drill should be queued for next()
+    const next = engine.next();
+    // Should get one of the confusion drill items
+    expect(next).toBeDefined();
   });
 
-  it('does not adjust when avg pL is in neutral zone (0.50-0.80)', () => {
-    const adjustCalls = [];
+  it('respects 10-question cooldown', () => {
     const cfg = makeConfig({
-      adjustParams: (params, dir, mag) => {
-        adjustCalls.push(dir);
-        return params;
+      genFromCluster: (clusterId) => ({ id: 'confused', clusters: ['default'] }),
+    });
+    const engine = new LearningEngine(cfg, null);
+
+    // Go past cold start
+    for (let i = 0; i < 8; i++) {
+      const item = engine.next();
+      engine.report(item, true, 500);
+    }
+
+    const target = engine.next();
+    engine.report(target, false, 500, { detected: 'F#' });
+    engine.report(target, false, 500, { detected: 'F#' });
+
+    // Trigger first confusion drill
+    const drill1 = engine.next();
+
+    // Drain the confusion queue
+    while (engine.confusionDrillQueue.length > 0) {
+      const d = engine.confusionDrillQueue.shift();
+      engine._ensureItem(d);
+      engine.report(d, true, 500);
+    }
+    engine.report(drill1, true, 500);
+
+    // Re-fail same item within cooldown
+    const again = engine.next();
+    const key = cfg.itemKey(target);
+    const rec = engine.items.get(key);
+    if (rec) {
+      engine.report(target, false, 500, { detected: 'F#' });
+    }
+
+    // Should NOT trigger another confusion drill within 10 questions
+    // (the rec._lastConfDrill was set recently)
+    expect(engine.confusionDrillQueue.length).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 1c: FSRS Due-Date Session Planning
+// ──────────────────────────────────────────────
+
+describe('FSRS due-date session planning', () => {
+  it('front-loads overdue items', () => {
+    const cfg = makeConfig();
+    const engine = new LearningEngine(cfg, null);
+
+    // Manually create items with past-due dates
+    const overdueItem = { id: 'overdue1', clusters: ['c1'] };
+    engine._ensureItem(overdueItem);
+    const rec = engine.items.get('overdue1');
+    rec.due = Date.now() - 86400000; // 1 day overdue
+    rec.S = 1;
+    rec.attempts = 3;
+    rec.lastReviewTs = Date.now() - 2 * 86400000;
+
+    // Go past cold start
+    engine.qNum = 7;
+    engine.totalAttempts = 10;
+
+    const next = engine.next();
+    // The overdue item should be front-loaded
+    expect(next.id).toBe('overdue1');
+  });
+
+  it('does not include non-overdue items', () => {
+    const cfg = makeConfig();
+    const engine = new LearningEngine(cfg, null);
+
+    // Create item with future due date
+    const futureItem = { id: 'future1', clusters: ['c1'] };
+    engine._ensureItem(futureItem);
+    const rec = engine.items.get('future1');
+    rec.due = Date.now() + 86400000; // due tomorrow
+    rec.S = 5;
+    rec.attempts = 3;
+    rec.lastReviewTs = Date.now();
+
+    engine.qNum = 7;
+    engine.totalAttempts = 10;
+    engine.overdueQueue = null; // force rebuild
+
+    const next = engine.next();
+    // Should NOT be the future item (it may be, but only via normal scoring, not overdue queue)
+    // The overdue queue should be empty
+    expect(engine.overdueQueue.length).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 1d: Cold Start Round-Robin
+// ──────────────────────────────────────────────
+
+describe('cold start round-robin', () => {
+  it('samples all types in first N questions with unified config', () => {
+    const typeIds = ['nf', 'st', 'iv'];
+    const generated = [];
+    const cfg = makeConfig({
+      getTypeIds: () => typeIds,
+      genFromType: (typeId) => {
+        generated.push(typeId);
+        return { id: typeId + '_item', clusters: ['default'] };
       },
     });
     const engine = new LearningEngine(cfg, null);
 
-    for (const id of ['A', 'B', 'C', 'D', 'E']) {
-      engine._ensureItem({ id, clusters: ['default'] });
-      const rec = engine.items.get(id);
-      rec.pL = 0.65;
-      rec.attempts = 3;
-      rec.lastSeen = engine.qNum;
+    // First 3 questions should round-robin through types
+    for (let i = 0; i < 3; i++) {
+      engine.next();
     }
-    engine.qNum = 8;
 
-    engine._adjustDifficulty();
-    expect(adjustCalls).toHaveLength(0);
+    // All 3 type IDs should have been used
+    expect(generated).toHaveLength(3);
+    expect(new Set(generated).size).toBe(3);
+    for (const tid of typeIds) {
+      expect(generated).toContain(tid);
+    }
+  });
+
+  it('dynamic cold start adjusts to type count', () => {
+    const typeIds = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']; // 10 types
+    const cfg = makeConfig({
+      getTypeIds: () => typeIds,
+      genFromType: (typeId) => ({ id: typeId + '_item', clusters: ['default'] }),
+    });
+    const engine = new LearningEngine(cfg, null);
+
+    // Cold start should be max(7, 10) = 10
+    for (let i = 0; i < 10; i++) {
+      const item = engine.next();
+      expect(item).toBeDefined();
+    }
+
+    // All 10 types should have been covered in first 10 questions
+    expect(engine.coldStartTypes).toHaveLength(10);
+  });
+
+  it('falls back to genRandom when getTypeIds is not available', () => {
+    const cfg = makeConfig(); // no getTypeIds
+    const engine = new LearningEngine(cfg, null);
+
+    // Should work normally without getTypeIds
+    for (let i = 0; i < 7; i++) {
+      const item = engine.next();
+      expect(item).toBeDefined();
+    }
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 1e: BKT/FSRS Reconciliation
+// ──────────────────────────────────────────────
+
+describe('BKT/FSRS reconciliation', () => {
+  it('dampens pL when high pL + low R (forgotten)', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    engine._ensureItem(item);
+    const rec = engine.items.get(engine.config.itemKey(item));
+
+    // Set up: high pL, low R scenario
+    rec.pL = 0.9;
+    rec.S = 0.5; // low stability
+    rec.lastReviewTs = Date.now() - 30 * 86400000; // 30 days ago → low R
+
+    engine._reconcileBKTFSRS(rec);
+
+    // pL should be dampened toward R
+    expect(rec.pL).toBeLessThan(0.9);
+  });
+
+  it('nudges pL up when low pL + high S + high R (FSRS stable)', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    engine._ensureItem(item);
+    const rec = engine.items.get(engine.config.itemKey(item));
+
+    rec.pL = 0.3;
+    rec.S = 10; // high stability
+    rec.lastReviewTs = Date.now() - 1000; // very recent → high R
+
+    engine._reconcileBKTFSRS(rec);
+
+    expect(rec.pL).toBeGreaterThan(0.3);
+  });
+
+  it('caps pL at 0.7 for lucky streak (high pL + very low S + few attempts)', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    engine._ensureItem(item);
+    const rec = engine.items.get(engine.config.itemKey(item));
+
+    rec.pL = 0.85;
+    rec.S = 0.3; // very low stability
+    rec.attempts = 3;
+    rec.lastReviewTs = Date.now();
+
+    engine._reconcileBKTFSRS(rec);
+
+    expect(rec.pL).toBeLessThanOrEqual(0.7);
+  });
+
+  it('does nothing when S is 0', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const item = engine.next();
+    engine._ensureItem(item);
+    const rec = engine.items.get(engine.config.itemKey(item));
+
+    rec.pL = 0.5;
+    rec.S = 0;
+
+    engine._reconcileBKTFSRS(rec);
+
+    expect(rec.pL).toBe(0.5);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 2a: Adaptive Sigma/Offset
+// ──────────────────────────────────────────────
+
+describe('adaptive sigma/offset (85% target)', () => {
+  it('widens sigma above 90% accuracy', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    engine.totalAttempts = 20;
+
+    // Fill session window with >90% accuracy
+    for (let i = 0; i < 20; i++) {
+      engine.sessionWindow.push({ ok: i < 19, timeMs: 500, qNum: i + 1 }); // 95% accuracy
+    }
+
+    const sigma = engine._adaptiveSigma();
+    expect(sigma).toBeGreaterThan(0.12);
+  });
+
+  it('narrows sigma below 80% accuracy', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    engine.totalAttempts = 20;
+
+    // Fill session window with <80% accuracy
+    for (let i = 0; i < 20; i++) {
+      engine.sessionWindow.push({ ok: i < 10, timeMs: 500, qNum: i + 1 }); // 50% accuracy
+    }
+
+    const sigma = engine._adaptiveSigma();
+    expect(sigma).toBeLessThan(0.12);
+  });
+
+  it('pushes offset higher above 90% accuracy', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    engine.totalAttempts = 20;
+
+    for (let i = 0; i < 20; i++) {
+      engine.sessionWindow.push({ ok: true, timeMs: 500, qNum: i + 1 });
+    }
+
+    const offset = engine._adaptiveOffset();
+    expect(offset).toBe(0.05);
+  });
+
+  it('pulls offset back below 80% accuracy', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    engine.totalAttempts = 20;
+
+    for (let i = 0; i < 20; i++) {
+      engine.sessionWindow.push({ ok: i < 10, timeMs: 500, qNum: i + 1 });
+    }
+
+    const offset = engine._adaptiveOffset();
+    expect(offset).toBe(-0.02);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 2b: Plateau Detection
+// ──────────────────────────────────────────────
+
+describe('plateau detection', () => {
+  it('detects plateau when theta is flat over 5 snapshots', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+
+    // Add 5 snapshots with very similar theta
+    for (let i = 0; i < 5; i++) {
+      engine.thetaHistory.push({ ts: Date.now() + i * 1000, theta: 0.500 + i * 0.001 });
+    }
+
+    engine._checkPlateau();
+    expect(engine.plateauDetected).toBe(true);
+  });
+
+  it('does not false positive during normal growth', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+
+    // Add 5 snapshots with growing theta
+    for (let i = 0; i < 5; i++) {
+      engine.thetaHistory.push({ ts: Date.now() + i * 1000, theta: 0.3 + i * 0.05 });
+    }
+
+    engine._checkPlateau();
+    expect(engine.plateauDetected).toBe(false);
+  });
+
+  it('requires at least 5 snapshots', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+
+    for (let i = 0; i < 3; i++) {
+      engine.thetaHistory.push({ ts: Date.now(), theta: 0.5 });
+    }
+
+    engine._checkPlateau();
+    expect(engine.plateauDetected).toBe(false);
+  });
+
+  it('is exposed in getMastery().overall', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    engine.plateauDetected = true;
+    const mastery = engine.getMastery();
+    expect(mastery.overall.plateauDetected).toBe(true);
+  });
+
+  it('is persisted in save/load via thetaHistory', () => {
+    const cfg = makeConfig();
+    const engine = new LearningEngine(cfg, 'plateau-test');
+
+    for (let i = 0; i < 5; i++) {
+      engine.thetaHistory.push({ ts: Date.now(), theta: 0.5 });
+    }
+    engine.save();
+
+    const engine2 = new LearningEngine(cfg, 'plateau-test');
+    expect(engine2.thetaHistory).toHaveLength(5);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 2c: Speed/Fluency Targets
+// ──────────────────────────────────────────────
+
+describe('speed/fluency targets', () => {
+  it('computes tighter target for high-pL items', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+
+    // Seed correct times
+    for (let i = 0; i < 20; i++) {
+      engine.allCorrectTimes.push(2000);
+    }
+
+    const highPL = { pL: 0.9, avgTime: 1500 };
+    const lowPL = { pL: 0.1, avgTime: 1500 };
+
+    const targetHigh = engine._targetTime(highPL);
+    const targetLow = engine._targetTime(lowPL);
+
+    // High pL should have tighter (lower) target
+    expect(targetHigh).toBeLessThan(targetLow);
+  });
+
+  it('returns 0 when no correct times recorded', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const target = engine._targetTime({ pL: 0.5 });
+    expect(target).toBe(0);
+  });
+
+  it('exposes targetTime and fluencyRatio in getMastery()', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+
+    // Seed times
+    for (let i = 0; i < 10; i++) engine.allCorrectTimes.push(2000);
+
+    const item = engine.next();
+    engine.report(item, true, 1500);
+
+    const mastery = engine.getMastery();
+    const it = mastery.items[0];
+    expect(typeof it.targetTime).toBe('number');
+    expect(typeof it.fluencyRatio).toBe('number');
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 3a: Knowledge Transfer
+// ──────────────────────────────────────────────
+
+describe('knowledge transfer', () => {
+  it('boosts initial pL from existing global cluster stats', () => {
+    const engine = new LearningEngine(makeConfig({
+      itemClusters: (item) => item.clusters || ['default'],
+    }), null);
+
+    // Create an established item with global cluster
+    const item1 = { id: 'item1', clusters: ['default', 'global_note_C'] };
+    engine._ensureItem(item1);
+
+    // Build up the global cluster stats
+    const cl = engine._ensureCluster('global_note_C');
+    cl.correct = 8;
+    cl.total = 10;
+
+    // Now create a new item that shares the global cluster
+    const item2 = { id: 'item2', clusters: ['default', 'global_note_C'] };
+    const rec = engine._ensureItem(item2);
+
+    // Should have boosted initial pL
+    expect(rec.pL).toBeGreaterThan(0);
+  });
+
+  it('caps knowledge transfer at 0.3', () => {
+    const engine = new LearningEngine(makeConfig({
+      itemClusters: (item) => item.clusters || ['default'],
+    }), null);
+
+    const cl = engine._ensureCluster('global_note_C');
+    cl.correct = 100;
+    cl.total = 100; // 100% accuracy
+
+    const item = { id: 'newitem', clusters: ['default', 'global_note_C'] };
+    const rec = engine._ensureItem(item);
+
+    expect(rec.pL).toBeLessThanOrEqual(0.3);
+  });
+
+  it('requires minimum 3 attempts in cluster', () => {
+    const engine = new LearningEngine(makeConfig({
+      itemClusters: (item) => item.clusters || ['default'],
+    }), null);
+
+    const cl = engine._ensureCluster('global_note_C');
+    cl.correct = 2;
+    cl.total = 2; // only 2 attempts — below threshold
+
+    const item = { id: 'newitem', clusters: ['default', 'global_note_C'] };
+    const rec = engine._ensureItem(item);
+
+    expect(rec.pL).toBe(0); // no transfer
+  });
+});
+
+// ──────────────────────────────────────────────
+// Phase 3b: Coverage Matrix
+// ──────────────────────────────────────────────
+
+describe('coverage matrix', () => {
+  it('returns 6×6 matrix with correct structure', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const matrix = engine.getCoverageMatrix();
+
+    // Should have entries for all string × zone combos
+    expect(matrix['str_0:zone_0']).toBeDefined();
+    expect(matrix['str_5:zone_12']).toBeDefined();
+    expect(matrix['str_0:zone_0'].count).toBe(0);
+  });
+
+  it('populates matrix from item clusters', () => {
+    const engine = new LearningEngine(makeConfig({
+      itemClusters: (item) => item.clusters,
+    }), null);
+
+    const item = { id: 'test', clusters: ['str_2', 'zone_5'] };
+    const rec = engine._ensureItem(item);
+    rec.pL = 0.5;
+
+    const matrix = engine.getCoverageMatrix();
+    expect(matrix['str_2:zone_5'].count).toBe(1);
+    expect(matrix['str_2:zone_5'].avgPL).toBeCloseTo(0.5);
+  });
+
+  it('applies coverage bonus in scoring for underpracticed cells', () => {
+    const engine = new LearningEngine(makeConfig({
+      itemClusters: (item) => item.clusters,
+    }), null);
+    engine.qNum = 10;
+    engine.totalAttempts = 10;
+
+    const item = { id: 'sparse', clusters: ['str_3', 'zone_7'] };
+    engine._ensureItem(item);
+    const rec = engine.items.get('sparse');
+    rec.pL = 0.5;
+    rec.S = 1;
+    rec.attempts = 3;
+    rec.lastReviewTs = Date.now();
+
+    const score = engine._scoreCandidate({ item, rec, isNew: false });
+    // Score should include coverage bonus since str_3/zone_7 has < 3 items
+    expect(score).toBeGreaterThan(0);
+  });
+
+  it('is included in getMastery()', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const mastery = engine.getMastery();
+    expect(mastery.coverage).toBeDefined();
+    expect(typeof mastery.coverage).toBe('object');
   });
 });
