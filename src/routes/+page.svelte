@@ -1,106 +1,79 @@
 <script>
   import { base } from '$app/paths';
-  import { CHAPTERS, renderRing } from '$lib/skilltree.js';
-  import { loadProgress, getChapterProgress, THRESHOLD } from '$lib/progress.js';
+  import { renderRing } from '$lib/skilltree.js';
+  import { loadUnifiedMastery } from '$lib/progress.js';
+  import { TYPES } from '$lib/learning/configs/unified.js';
+  import { migrateToUnified } from '$lib/learning/migration.js';
 
-  let progress = $state(loadProgress());
+  migrateToUnified();
 
-  let displayChapters = $derived(CHAPTERS);
+  let um = $state(loadUnifiedMastery());
 
-  let chapProgress = $derived(
-    Object.fromEntries(displayChapters.map(ch => [
-      ch.id,
-      ch.exercises.length > 0 ? getChapterProgress(ch.id, CHAPTERS) : { total: 0, completed: 0, pct: 0 }
-    ]))
-  );
+  let overallPct = $derived(um ? Math.round(um.overall * 100) : 0);
 
-  let totalExercises = $derived(displayChapters.reduce((s, c) => s + c.exercises.length, 0));
-  let totalCompleted = $derived(Object.values(chapProgress).reduce((s, p) => s + p.completed, 0));
-
-  function isCompleted(exId) {
-    const rec = progress.exercises[exId];
-    return rec && (rec.bestScore >= THRESHOLD || rec.visited);
-  }
-
-  let openHint = $state(-1);
-
-  function toggleHint(id) {
-    openHint = openHint === id ? -1 : id;
-  }
-
-  function refreshProgress() {
-    progress = loadProgress();
-  }
+  let perType = $derived.by(() => {
+    if (!um) return TYPES.map(t => ({ ...t, avgPL: 0, count: 0 }));
+    return TYPES.map(t => {
+      const typeItems = um.items.filter(i => i.key.startsWith(t.id + ':'));
+      const avgPL = typeItems.length > 0 ? typeItems.reduce((s, i) => s + i.pL, 0) / typeItems.length : 0;
+      return { ...t, avgPL, count: typeItems.length };
+    });
+  });
 </script>
 
 <svelte:head>
   <title>Guitar Learning Tools</title>
-  <meta name="description" content="Interactive guitar learning pathway — master the fretboard through 5 chapters of mic-based exercises.">
+  <meta name="description" content="Interactive guitar learning — master the fretboard through adaptive mic-based exercises.">
 </svelte:head>
 
-<div class="tree-page">
-  <header class="tree-header">
-    <h1 class="tree-title">Guitar Learning Tools</h1>
-    <div class="tree-sub">
-      <span class="tree-sub-track">{totalCompleted}/{totalExercises} exercises</span>
-      <span class="tree-sub-sep">&middot;</span>
-      <span>5 chapters</span>
-    </div>
+<div class="landing">
+  <header class="landing-header">
+    <h1 class="landing-title">Guitar Learning Tools</h1>
+    <p class="landing-sub">Adaptive practice for fretboard mastery</p>
   </header>
 
-  <div class="chapter-grid">
-    {#each displayChapters as ch, i}
-      {@const prog = chapProgress[ch.id]}
-      <div class="chapter-card" style="--ch-color:{ch.color}; --delay:{i * 0.04}s">
-        <div class="card-header">
-          <div class="card-node">
-            <div class="card-ring">{@html renderRing(prog.pct, ch.color, 44)}</div>
-            <div class="card-num">{ch.id}</div>
-            {#if prog.pct === 100}
-              <div class="card-check">&#10003;</div>
-            {/if}
-          </div>
-          <div class="card-title-area">
-            <div class="card-title">{ch.title}</div>
-            {#if prog.total > 0}
-              <div class="card-progress">{prog.completed}/{prog.total} completed</div>
-            {:else}
-              <div class="card-progress">Theory</div>
-            {/if}
-          </div>
-          {#if ch.hints?.length}
-            <button class="hint-btn" class:hint-btn-active={openHint === ch.id} onclick={() => toggleHint(ch.id)} title="Practice tips">?</button>
-          {/if}
+  <div class="mastery-section">
+    <div class="mastery-ring">
+      {@html renderRing(overallPct, '#58A6FF', 140)}
+      <div class="mastery-pct">{overallPct}%</div>
+    </div>
+    {#if um && um.totalItems > 0}
+      <div class="mastery-label">{um.totalItems} items practiced</div>
+    {:else}
+      <div class="mastery-label">Start practicing to track progress</div>
+    {/if}
+  </div>
+
+  <div class="type-bars">
+    {#each perType as ts}
+      <div class="type-bar">
+        <div class="type-bar-name">{ts.name}</div>
+        <div class="type-bar-track">
+          <div class="type-bar-fill" style="width:{Math.round(ts.avgPL * 100)}%"></div>
         </div>
-
-        {#if openHint === ch.id && ch.hints?.length}
-          <div class="hint-panel">
-            {#each ch.hints as hint}
-              <div class="hint-item">{hint}</div>
-            {/each}
-          </div>
-        {/if}
-
-        {#if ch.exercises.length > 0}
-          <div class="exercise-list">
-            {#each ch.exercises as ex}
-              <a href="{base}{ex.path}" class="exercise-link" onclick={refreshProgress}>
-                <span class="ex-name">{ex.name}</span>
-                <span class="ex-badges">
-                  {#if ex.mic}<span class="ex-mic" title="Uses microphone">&#127908;</span>{/if}
-                  {#if isCompleted(ex.id)}<span class="ex-done">&#10003;</span>{/if}
-                </span>
-              </a>
-            {/each}
-          </div>
-        {:else}
-          <div class="card-placeholder">
-            <span>Exercises coming soon</span>
-            <a href="https://github.com/dknathalage/guitar-learning/blob/main/{ch.docsPath}" class="docs-link" target="_blank" rel="noopener">Read notes &rarr;</a>
-          </div>
-        {/if}
+        <div class="type-bar-pct">{ts.count > 0 ? Math.round(ts.avgPL * 100) + '%' : '\u2014'}</div>
       </div>
     {/each}
+  </div>
+
+  <a href="{base}/practice" class="practice-btn">Practice</a>
+
+  <div class="secondary-links">
+    <a href="{base}/tuner" class="sec-link">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+      Tuner
+    </a>
+    <a href="{base}/caged" class="sec-link">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="3" x2="9" y2="21"/>
+      </svg>
+      CAGED Visualizer
+    </a>
   </div>
 
   <!-- Tuner FAB -->
@@ -114,9 +87,9 @@
 </div>
 
 <style>
-  .tree-page {
+  .landing {
     min-height: 100vh;
-    padding: 2.5rem 1.5rem 5rem;
+    padding: 3rem 1.5rem 5rem;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -126,14 +99,13 @@
       var(--bg);
   }
 
-  /* ── Header ── */
-  .tree-header {
+  .landing-header {
     text-align: center;
-    margin-bottom: 2.5rem;
+    margin-bottom: 2rem;
     opacity: 0;
     animation: fadeUp .6s ease forwards;
   }
-  .tree-title {
+  .landing-title {
     font-size: clamp(1.6rem, 4.5vw, 2.6rem);
     font-weight: 900;
     letter-spacing: -1.5px;
@@ -143,236 +115,151 @@
     background-clip: text;
     margin-bottom: .5rem;
   }
-  .tree-sub {
+  .landing-sub {
     font-family: 'JetBrains Mono', monospace;
-    font-size: .75rem;
+    font-size: .8rem;
     color: var(--mt);
     letter-spacing: .5px;
-    display: flex;
-    gap: .5rem;
-    justify-content: center;
-    align-items: center;
-  }
-  .tree-sub-track {
-    color: var(--ac);
-    font-weight: 600;
-  }
-  .tree-sub-sep {
-    opacity: .4;
   }
 
-  /* ── Chapter Grid ── */
-  .chapter-grid {
-    width: 100%;
-    max-width: 1100px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-
-  /* ── Chapter Card ── */
-  .chapter-card {
-    position: relative;
-    background: var(--sf);
-    border: 1px solid var(--bd);
-    border-top: 3px solid var(--ch-color);
-    border-radius: 14px;
-    padding: 1.2rem;
+  .mastery-section {
     display: flex;
     flex-direction: column;
-    gap: .8rem;
-    opacity: 0;
-    animation: fadeUp .5s ease forwards;
-    animation-delay: var(--delay, 0s);
-    transition: border-color .2s, box-shadow .2s;
-  }
-  .chapter-card:hover {
-    border-color: var(--ch-color);
-    box-shadow: 0 4px 20px color-mix(in srgb, var(--ch-color) 10%, transparent);
-  }
-
-  .card-header {
-    display: flex;
     align-items: center;
-    gap: .7rem;
+    gap: .75rem;
+    margin-bottom: 1.5rem;
+    opacity: 0;
+    animation: fadeUp .6s ease forwards;
+    animation-delay: .1s;
   }
-
-  .card-node {
+  .mastery-ring {
     position: relative;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: var(--sf);
+    width: 140px;
+    height: 140px;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
   }
-  .card-ring {
+  .mastery-ring :global(svg) {
     position: absolute;
     inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
-  .card-ring :global(svg) {
-    display: block;
-  }
-  .card-num {
-    position: relative;
-    z-index: 2;
+  .mastery-pct {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 1rem;
-    font-weight: 800;
-    color: var(--ch-color);
-    text-shadow: 0 0 12px color-mix(in srgb, var(--ch-color) 30%, transparent);
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--ac);
+    z-index: 1;
   }
-  .card-check {
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #4ECB71;
-    color: #0D1117;
-    font-size: 9px;
-    font-weight: 900;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 3;
-    box-shadow: 0 0 8px rgba(78,203,113,.5);
+  .mastery-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .7rem;
+    color: var(--mt);
+    letter-spacing: .5px;
   }
 
-  .card-title-area {
-    min-width: 0;
+  .type-bars {
+    width: 100%;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    margin-bottom: 2rem;
+    opacity: 0;
+    animation: fadeUp .6s ease forwards;
+    animation-delay: .2s;
   }
-  .card-title {
+  .type-bar {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  .type-bar-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--mt);
+    width: 110px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .type-bar-track {
+    flex: 1;
+    height: 8px;
+    background: var(--sf2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .type-bar-fill {
+    height: 100%;
+    background: var(--ac);
+    border-radius: 4px;
+    transition: width .3s;
+  }
+  .type-bar-pct {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--mt);
+    width: 36px;
+    text-align: right;
+  }
+
+  .practice-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: .8rem 3rem;
+    border-radius: 28px;
+    border: 2px solid var(--ac);
+    background: rgba(88,166,255,.1);
+    color: var(--ac);
+    font-family: 'JetBrains Mono', monospace;
     font-size: 1.1rem;
     font-weight: 700;
-    color: var(--ch-color);
-  }
-  .card-progress {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: .7rem;
-    color: var(--mt);
-    margin-top: .15rem;
-  }
-
-  /* ── Hint Button & Panel ── */
-  .hint-btn {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    border: 1.5px solid var(--bd);
-    background: var(--sf2);
-    color: var(--mt);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: .75rem;
-    font-weight: 700;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-left: auto;
-    transition: all .15s;
-  }
-  .hint-btn:hover, .hint-btn-active {
-    border-color: var(--ch-color);
-    color: var(--ch-color);
-    background: color-mix(in srgb, var(--ch-color) 10%, var(--sf2));
-  }
-
-  .hint-panel {
-    display: flex;
-    flex-direction: column;
-    gap: .4rem;
-    padding: .6rem .75rem;
-    background: color-mix(in srgb, var(--ch-color) 4%, var(--sf2));
-    border: 1px solid color-mix(in srgb, var(--ch-color) 15%, var(--bd));
-    border-radius: 8px;
-  }
-  .hint-item {
-    font-size: .8rem;
-    color: var(--tx);
-    line-height: 1.45;
-    padding-left: .75rem;
-    border-left: 2px solid var(--ch-color);
-  }
-
-  /* ── Exercises ── */
-  .exercise-list {
-    display: flex;
-    flex-direction: column;
-    gap: .4rem;
-    flex: 1;
-  }
-  .exercise-link {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: .5rem .75rem;
-    background: var(--sf2);
-    border: 1px solid var(--bd);
-    border-radius: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
     text-decoration: none;
-    color: var(--tx);
-    transition: all .15s;
-    gap: .4rem;
+    cursor: pointer;
+    transition: all .2s;
+    margin-bottom: 1.5rem;
+    opacity: 0;
+    animation: fadeUp .6s ease forwards;
+    animation-delay: .3s;
   }
-  .exercise-link:hover {
-    border-color: var(--ch-color);
-    background: color-mix(in srgb, var(--ch-color) 6%, var(--sf2));
+  .practice-btn:hover {
+    background: rgba(88,166,255,.2);
+    box-shadow: 0 4px 24px rgba(88,166,255,.2);
+    transform: translateY(-2px);
+  }
+
+  .secondary-links {
+    display: flex;
+    gap: 1rem;
+    opacity: 0;
+    animation: fadeUp .6s ease forwards;
+    animation-delay: .4s;
+  }
+  .sec-link {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .5rem 1rem;
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: 12px;
+    text-decoration: none;
+    color: var(--mt);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .8rem;
+    font-weight: 600;
+    transition: all .15s;
+  }
+  .sec-link:hover {
+    border-color: var(--ac);
+    color: var(--ac);
     transform: translateY(-1px);
   }
-  .ex-name {
-    font-size: .85rem;
-    font-weight: 600;
-  }
-  .ex-badges {
-    display: flex;
-    align-items: center;
-    gap: .35rem;
-    flex-shrink: 0;
-  }
-  .ex-mic {
-    font-size: .7rem;
-    opacity: .5;
-  }
-  .ex-done {
-    color: #4ECB71;
-    font-size: .8rem;
-    font-weight: 700;
-    text-shadow: 0 0 6px rgba(78,203,113,.4);
-  }
 
-  .card-placeholder {
-    display: flex;
-    flex-direction: column;
-    gap: .4rem;
-    padding: .7rem;
-    background: var(--sf2);
-    border: 1px dashed var(--bd);
-    border-radius: 8px;
-    font-size: .8rem;
-    color: var(--mt);
-    flex: 1;
-  }
-  .docs-link {
-    color: var(--ch-color);
-    text-decoration: none;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: .75rem;
-    font-weight: 600;
-    transition: opacity .15s;
-  }
-  .docs-link:hover {
-    opacity: .7;
-  }
-
-  /* ── Tuner FAB ── */
+  /* Tuner FAB */
   .tuner-fab {
     position: fixed;
     bottom: 1.5rem;
@@ -408,21 +295,15 @@
     line-height: 1;
   }
 
-  /* ── Animations ── */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: none; }
   }
 
-  /* ── Responsive ── */
-  @media (max-width: 900px) {
-    .chapter-grid { grid-template-columns: repeat(2, 1fr); }
-  }
   @media (max-width: 580px) {
-    .tree-page { padding: 1.5rem .75rem 5rem; }
-    .tree-header { margin-bottom: 1.5rem; }
-    .chapter-grid { grid-template-columns: 1fr; max-width: 400px; }
-    .chapter-card { padding: 1rem; }
+    .landing { padding: 2rem .75rem 5rem; }
+    .type-bar-name { width: 80px; font-size: 10px; }
+    .practice-btn { padding: .6rem 2rem; font-size: .95rem; }
     .tuner-fab { bottom: 1rem; right: 1rem; }
   }
 </style>

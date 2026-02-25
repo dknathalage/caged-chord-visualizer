@@ -61,4 +61,17 @@ export function resetProgress() {
   localStorage.removeItem(KEY);
 }
 
+export function loadUnifiedMastery() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('gl_learn_practice');
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data?.items) return null;
+    const items = Object.entries(data.items).map(([key, rec]) => ({ key, pL: rec.pL ?? 0 }));
+    const overall = items.length > 0 ? items.reduce((s, i) => s + i.pL, 0) / items.length : 0;
+    return { overall, items, totalItems: items.length };
+  } catch { return null; }
+}
+
 export { THRESHOLD };

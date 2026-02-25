@@ -116,7 +116,7 @@ export class LearningEngine {
 
     // Cold start: pure random for first COLD_START questions
     if (this.qNum <= COLD_START) {
-      const item = this.config.genRandom(this.params, this.lastItem);
+      const item = this.config.genRandom(this.params, this.lastItem, this);
       this._ensureItem(item);
       this._trackRecent(item);
       this.lastItem = item;
@@ -138,7 +138,7 @@ export class LearningEngine {
     for (let i = 0; i < 3; i++) {
       const useFrontier = frontierParams && Math.random() < fp;
       const p = useFrontier ? frontierParams : this.params;
-      const item = this.config.genRandom(p, this.lastItem);
+      const item = this.config.genRandom(p, this.lastItem, this);
       const key = this.config.itemKey(item);
       if (!this.items.has(key)) {
         candidates.push({ item, rec: null, isNew: true });
@@ -146,7 +146,7 @@ export class LearningEngine {
     }
 
     if (candidates.length === 0) {
-      const item = this.config.genRandom(this.params, this.lastItem);
+      const item = this.config.genRandom(this.params, this.lastItem, this);
       this._ensureItem(item);
       this._trackRecent(item);
       this.lastItem = item;
