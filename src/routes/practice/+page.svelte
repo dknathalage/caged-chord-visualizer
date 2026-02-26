@@ -18,6 +18,9 @@
   import ScaleRunner from '$lib/components/challenges/ScaleRunner.svelte';
   import ModeTrainer from '$lib/components/challenges/ModeTrainer.svelte';
   import ChordTransition from '$lib/components/challenges/ChordTransition.svelte';
+  import ChordRecognition from '$lib/components/challenges/ChordRecognition.svelte';
+  import RhythmTrainer from '$lib/components/challenges/RhythmTrainer.svelte';
+  import StrumPatternTrainer from '$lib/components/challenges/StrumPatternTrainer.svelte';
 
   migrateToUnified();
 
@@ -50,7 +53,7 @@
   let challengeRef = $state(null);
 
   // Audio & Engine
-  const audio = new AudioManager();
+  const audio = new AudioManager({ audio: { enableChromagram: true, enableOnset: true } });
   let engine = new LearningEngine(unifiedConfig, 'practice', { onError: (msg) => addToast(msg) });
 
   // Mastery state for idle view
@@ -126,14 +129,14 @@
     msgErr = isErr;
   }
 
-  function onChallengeComplete(basePts, mult) {
+  function onChallengeComplete(basePts, mult, extraMeta) {
     phase = 'success'; correct++; attempts++; streak++;
     if (streak > best) best = streak;
     let pts = basePts + streak * mult;
     if (streak === 5) pts += 20;
     if (streak === 10) pts += 50;
     score += pts;
-    engine.report(curItem, true, performance.now() - qStartTime);
+    engine.report(curItem, true, performance.now() - qStartTime, extraMeta || null);
     msgText = `+${pts} points!`; msgErr = false;
     refreshSessionMastery();
     setTimeout(() => { if (phase === 'success') nextChallenge(); }, 1200);
@@ -182,6 +185,18 @@
     challengeRef?.handleSilence();
   }
 
+  function handleChord(e) {
+    const { chordName, rootName, typeId, score } = e.detail;
+    if (phase !== 'listening') return;
+    challengeRef?.handleChord?.(chordName, rootName, typeId, score);
+  }
+
+  function handleOnset(e) {
+    const { strength, timeMs } = e.detail;
+    if (phase !== 'listening') return;
+    challengeRef?.handleOnset?.(strength, timeMs);
+  }
+
   // --- Flow functions ---
   async function onStart() {
     refreshMastery();
@@ -194,6 +209,8 @@
     }
     audio.addEventListener('detect', handleDetect);
     audio.addEventListener('silence', handleSilence);
+    audio.addEventListener('chord', handleChord);
+    audio.addEventListener('onset', handleOnset);
     phase = 'listening';
     nextChallenge();
     audio.startLoop();
@@ -212,6 +229,8 @@
     saveExercise('practice', { bestScore: score, bestAccuracy: attempts > 0 ? Math.round(correct / attempts * 100) : 0 });
     audio.removeEventListener('detect', handleDetect);
     audio.removeEventListener('silence', handleSilence);
+    audio.removeEventListener('chord', handleChord);
+    audio.removeEventListener('onset', handleOnset);
     phase = 'idle'; audio.stop();
     showDetected(null);
     refreshMastery();
@@ -233,6 +252,8 @@
   onDestroy(() => {
     audio.removeEventListener('detect', handleDetect);
     audio.removeEventListener('silence', handleSilence);
+    audio.removeEventListener('chord', handleChord);
+    audio.removeEventListener('onset', handleOnset);
     engine.save();
     audio.stop();
   });
@@ -381,6 +402,12 @@
         <ModeTrainer bind:this={challengeRef} onComplete={onChallengeComplete} onWrong={onChallengeWrong} onInvalid={onChallengeInvalid} {setMsg} {showDetected} />
       {:else if challengeType === 'cx'}
         <ChordTransition bind:this={challengeRef} onComplete={onChallengeComplete} onWrong={onChallengeWrong} onInvalid={onChallengeInvalid} {setMsg} {showDetected} />
+      {:else if challengeType === 'cr'}
+        <ChordRecognition bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrong} onInvalid={onChallengeInvalid} {setMsg} {showDetected} />
+      {:else if challengeType === 'rt'}
+        <RhythmTrainer bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrong} {setMsg} {showDetected} />
+      {:else if challengeType === 'sp'}
+        <StrumPatternTrainer bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrong} {setMsg} {showDetected} />
       {/if}
 
       <PitchDisplay {detectedNote} {detectedClass} {centsLbl} {centsLeft} {hzText} />

@@ -7,13 +7,23 @@ import { DEFAULTS } from '../../learning/defaults.js';
  */
 export function createHoldDetector(params) {
   const hd = params?.holdDetection ?? DEFAULTS.holdDetection;
-  const confirmMs = hd.confirmMs;
+  let confirmMs = hd.confirmMs;
   const wrongMs = hd.wrongMs;
   const cooldownMs = hd.cooldownMs;
+
+  // Adaptive hold detection
+  const adaptive = hd.adaptiveConfirmMs ?? false;
+  const [minConfirm, maxConfirm] = hd.confirmMsRange ?? [200, 500];
 
   let holdStart = 0;
   let wrongHold = 0;
   let wrongCd = 0;
+
+  function setTheta(theta) {
+    if (!adaptive) return;
+    // Higher theta = shorter hold required (lerp from maxConfirm to minConfirm)
+    confirmMs = maxConfirm - theta * (maxConfirm - minConfirm);
+  }
 
   function check(isCorrect, isListening, onConfirm, onWrong) {
     if (isCorrect && isListening) {
@@ -45,5 +55,5 @@ export function createHoldDetector(params) {
     holdStart = 0;
   }
 
-  return { check, reset, resetAfterVoice };
+  return { check, reset, resetAfterVoice, setTheta };
 }

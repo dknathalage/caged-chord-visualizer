@@ -73,12 +73,21 @@ export const DEFAULTS = Object.freeze({
     rmsThreshold: 0.01,
     yinThreshold: 0.15,
     confidenceThreshold: 0.85,
+    harmonicCorrectionEnabled: true,
+    enableFeatures: false,
+  }),
+
+  calibration: Object.freeze({
+    targetFrames: 100,
+    safetyMultiplier: 1.5,
   }),
 
   holdDetection: Object.freeze({
     confirmMs: 300,
     wrongMs: 600,
     cooldownMs: 2000,
+    adaptiveConfirmMs: true,
+    confirmMsRange: Object.freeze([200, 500]),
   }),
 
   transfer: Object.freeze({
@@ -92,5 +101,12 @@ export const DEFAULTS = Object.freeze({
     thetaWindow: 0.15,
     weaknessBoostScale: 0.5,
     minTypeWeight: 0.05,
+  }),
+
+  intonation: Object.freeze({
+    poorCentsThreshold: 25,
+    poorStdThreshold: 20,
+    excellentCentsThreshold: 5,
+    excellentStdThreshold: 8,
   }),
 });

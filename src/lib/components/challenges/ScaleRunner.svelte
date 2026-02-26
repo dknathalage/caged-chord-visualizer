@@ -14,6 +14,7 @@
   let boardStartFret = $state(0);
 
   const hold = createHoldDetector();
+  let centsBuffer = [];
 
   function computeSeqStartFret(startFret) {
     const center = startFret + 2;
@@ -37,6 +38,7 @@
   export function prepare(inner, isRecall) {
     recall = isRecall;
     hold.reset();
+    centsBuffer = [];
     const ri = inner.rootIdx;
     const root = NOTES[ri];
     const scale = SCALES.find(sc => sc.id === inner.scaleId);
@@ -64,13 +66,23 @@
     const midiOk = Math.abs(semi + 69 - target.midi) <= 1;
     const ok = nm && midiOk;
     showDetected(note, cents, hz, ok);
+    if (ok) centsBuffer.push(cents);
+    else centsBuffer = [];
     hold.check(ok, true, () => {
       noteIdx++;
       hold.resetAfterVoice();
       if (noteIdx >= challenge.seq.length) {
+        const extraMeta = {};
+        if (centsBuffer.length > 0) {
+          const avg = centsBuffer.reduce((a, b) => a + b, 0) / centsBuffer.length;
+          const variance = centsBuffer.reduce((s, v) => s + (v - avg) ** 2, 0) / centsBuffer.length;
+          extraMeta.avgCents = Math.round(avg * 10) / 10;
+          extraMeta.stdCents = Math.round(Math.sqrt(variance) * 10) / 10;
+        }
+        centsBuffer = [];
         fbSuccess = true;
         fbFlash = true;
-        onComplete(40, 3);
+        onComplete(40, 3, extraMeta);
         setTimeout(() => { fbSuccess = false; fbFlash = false; }, 1200);
       } else {
         const t = challenge.seq[noteIdx];
@@ -82,6 +94,7 @@
   export function handleSilence() {
     showDetected(null, 0, 0, false);
     hold.reset();
+    centsBuffer = [];
   }
 
   function dotCx(fret, fretLeft, fretWidth, dotRadius, startFret) {

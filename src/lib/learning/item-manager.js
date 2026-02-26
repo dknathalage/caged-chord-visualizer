@@ -42,6 +42,9 @@ export function ensureItem(items, clusters, config, item, params) {
       streak: 0,
       clusters: itemClusters,
       confusions: [],
+      centsHistory: [],
+      avgCents: null,
+      techniqueScores: [],
     };
     items.set(key, rec);
     for (const cid of itemClusters) {

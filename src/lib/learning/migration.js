@@ -30,18 +30,24 @@ export function migrateToUnified() {
         migrateV3toV4(data);
         changed = true;
       }
+      // Migrate v4 → v5: add intonation/technique fields + audioFeatures
+      if (data.v === 4) {
+        migrateV4toV5(data);
+        changed = true;
+      }
       if (changed) localStorage.setItem(TARGET_KEY, JSON.stringify(data));
     } catch { /* corrupt data, leave as-is */ }
     return;
   }
 
   const merged = {
-    v: 4, ts: Date.now(), qNum: 0, totalAttempts: 0, allCorrectTimes: [],
+    v: 5, ts: Date.now(), qNum: 0, totalAttempts: 0, allCorrectTimes: [],
     items: {}, clusters: {}, recentKeys: [], theta: 0.05,
     adaptive: {
       pG: null, pS: null, pT: null,
       drillEffectiveness: { microDrill: { helped: 0, total: 0 }, confusionDrill: { helped: 0, total: 0 } },
       featureErrorRates: {},
+      audioFeatures: { calibratedNoiseFloor: null, avgOnsetStrength: null },
     },
   };
 
@@ -89,4 +95,23 @@ export function migrateV3toV4(data) {
     },
     featureErrorRates: {},
   };
+}
+
+export function migrateV4toV5(data) {
+  data.v = 5;
+  if (data.items) {
+    for (const rec of Object.values(data.items)) {
+      rec.centsHistory = rec.centsHistory ?? [];
+      rec.avgCents = rec.avgCents ?? null;
+      rec.techniqueScores = rec.techniqueScores ?? [];
+    }
+  }
+  if (!data.adaptive) {
+    data.adaptive = {
+      pG: null, pS: null, pT: null,
+      drillEffectiveness: { microDrill: { helped: 0, total: 0 }, confusionDrill: { helped: 0, total: 0 } },
+      featureErrorRates: {},
+    };
+  }
+  data.adaptive.audioFeatures = data.adaptive.audioFeatures ?? { calibratedNoiseFloor: null, avgOnsetStrength: null };
 }

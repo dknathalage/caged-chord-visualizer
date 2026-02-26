@@ -58,6 +58,15 @@ export function gradeFromResponse(ok, timeMs, medianTime) {
   return 2;
 }
 
+export function gradeFromResponseEnhanced(ok, timeMs, medianTime, avgCents, stdCents) {
+  const baseGrade = gradeFromResponse(ok, timeMs, medianTime);
+  if (!ok) return 1;
+  const absCents = Math.abs(avgCents);
+  if (absCents > 25 || stdCents > 20) return Math.max(1, baseGrade - 1);
+  if (absCents < 5 && stdCents < 8) return Math.min(4, baseGrade + 1);
+  return baseGrade;
+}
+
 const MS_PER_DAY = 86400000;
 
 export function updateFSRS(rec, grade) {

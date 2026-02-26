@@ -6,6 +6,9 @@ import { chordPlayerConfig } from './chordPlayer.js';
 import { scaleRunnerConfig } from './scaleRunner.js';
 import { modeTrainerConfig } from './modeTrainer.js';
 import { chordTransitionConfig } from './chordTransition.js';
+import { chordRecognitionConfig } from './chordRecognition.js';
+import { rhythmTrainerConfig } from './rhythmTrainer.js';
+import { strumPatternConfig } from './strumPattern.js';
 import { DEFAULTS } from '../defaults.js';
 
 export const TYPES = [
@@ -17,6 +20,9 @@ export const TYPES = [
   { id: 'sr', config: scaleRunnerConfig,         name: 'Scale Runner' },
   { id: 'mt', config: modeTrainerConfig,         name: 'Mode Trainer' },
   { id: 'cx', config: chordTransitionConfig,     name: 'Chord Transition' },
+  { id: 'cr', config: chordRecognitionConfig,    name: 'Chord Recognition' },
+  { id: 'rt', config: rhythmTrainerConfig,       name: 'Rhythm Trainer' },
+  { id: 'sp', config: strumPatternConfig,        name: 'Strum Pattern' },
 ];
 
 // Global difficulty ranges per type — overlapping for smooth transitions
@@ -29,6 +35,9 @@ const TYPE_DIFFICULTY = {
   sr: { base: 0.50, span: 0.35 },
   mt: { base: 0.60, span: 0.40 },
   cx: { base: 0.40, span: 0.40 },
+  cr: { base: 0.30, span: 0.40 },
+  rt: { base: 0.15, span: 0.50 },
+  sp: { base: 0.25, span: 0.50 },
 };
 
 // --- Helpers ---

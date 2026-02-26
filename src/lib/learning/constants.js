@@ -22,6 +22,8 @@ export const CONSTANTS = Object.freeze({
     FFT_SIZE: 8192,
     FREQ_MIN: 50,
     FREQ_MAX: 1400,
+    WORKLET_HOP: 512,
+    WORKLET_FRAME: 4096,
   }),
 
   history: Object.freeze({
@@ -31,5 +33,7 @@ export const CONSTANTS = Object.freeze({
     MAX_CONFUSIONS: 10,
     MAX_RECENT: 5,
     SESSION_WINDOW: 20,
+    MAX_CENTS_HISTORY: 10,
+    MAX_TECHNIQUE_SCORES: 10,
   }),
 });

@@ -1,6 +1,6 @@
 import { median } from './math-utils.js';
 import { ensureItem, ensureCluster, trackRecent } from './item-manager.js';
-import { updateFSRS, fsrsRetrievability, gradeFromResponse } from './scheduling/fsrs.js';
+import { updateFSRS, fsrsRetrievability, gradeFromResponse, gradeFromResponseEnhanced } from './scheduling/fsrs.js';
 import { updateBKT, reconcileBKTFSRS } from './knowledge/bkt.js';
 import { updateTheta, checkPlateau, adaptiveSigma, adaptiveOffset } from './knowledge/theta.js';
 import { scoreCandidate, isMastered, targetTime } from './selection/scorer.js';
@@ -22,6 +22,7 @@ const DEFAULT_ADAPTIVE = {
     confusionDrill: { helped: 0, total: 0 },
   },
   featureErrorRates: {},
+  audioFeatures: { calibratedNoiseFloor: null, avgOnsetStrength: null },
 };
 
 export class LearningEngine {
@@ -247,10 +248,23 @@ export class LearningEngine {
 
     // FSRS grade
     const med = median(this.allCorrectTimes);
-    const grade = gradeFromResponse(ok, timeMs, med);
+    const grade = meta?.avgCents != null
+      ? gradeFromResponseEnhanced(ok, timeMs, med, meta.avgCents, meta.stdCents ?? 50)
+      : gradeFromResponse(ok, timeMs, med);
 
     // FSRS update
     updateFSRS(rec, grade);
+
+    // Intonation and technique tracking
+    if (meta?.avgCents != null) {
+      rec.centsHistory.push(meta.avgCents);
+      if (rec.centsHistory.length > this.constants.history.MAX_CENTS_HISTORY) rec.centsHistory.shift();
+      rec.avgCents = meta.avgCents;
+    }
+    if (meta?.techniqueScore != null) {
+      rec.techniqueScores.push(meta.techniqueScore);
+      if (rec.techniqueScores.length > this.constants.history.MAX_TECHNIQUE_SCORES) rec.techniqueScores.shift();
+    }
 
     // BKT update
     updateBKT(rec, ok, timeMs, med, this.bkt);
@@ -328,6 +342,9 @@ export class LearningEngine {
         correct: rec.correct,
         streak: rec.streak,
         topConfusion: tc,
+        avgCents: rec.avgCents,
+        centsHistory: rec.centsHistory,
+        techniqueScores: rec.techniqueScores,
       });
     }
 

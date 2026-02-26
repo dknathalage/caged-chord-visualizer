@@ -36,7 +36,7 @@ describe('migrateV3toV4', () => {
   });
 });
 
-describe('migrateToUnified v3→v4 chain', () => {
+describe('migrateToUnified v3→v4→v5 chain', () => {
   const store = {};
   const localStorageMock = {
     getItem: vi.fn(k => store[k] ?? null),
@@ -53,7 +53,7 @@ describe('migrateToUnified v3→v4 chain', () => {
     globalThis.window = {};
   });
 
-  it('migrates existing v3 data to v4 with adaptive', async () => {
+  it('migrates existing v3 data to v5 with adaptive', async () => {
     const v3Data = {
       v: 3,
       ts: Date.now(),
@@ -71,7 +71,7 @@ describe('migrateToUnified v3→v4 chain', () => {
     migrateToUnified();
 
     const result = JSON.parse(store['gl_learn_practice']);
-    expect(result.v).toBe(4);
+    expect(result.v).toBe(5);
     expect(result.adaptive).toEqual({
       pG: null,
       pS: null,
@@ -81,12 +81,16 @@ describe('migrateToUnified v3→v4 chain', () => {
         confusionDrill: { helped: 0, total: 0 },
       },
       featureErrorRates: {},
+      audioFeatures: { calibratedNoiseFloor: null, avgOnsetStrength: null },
     });
     expect(result.theta).toBe(0.3);
     expect(result.items.A.pL).toBe(0.6);
+    expect(result.items.A.centsHistory).toEqual([]);
+    expect(result.items.A.avgCents).toBeNull();
+    expect(result.items.A.techniqueScores).toEqual([]);
   });
 
-  it('chains v2→v3→v4 migration', async () => {
+  it('chains v2→v3→v4→v5 migration', async () => {
     const v2Data = {
       v: 2,
       ts: Date.now(),
@@ -103,9 +107,10 @@ describe('migrateToUnified v3→v4 chain', () => {
     migrateToUnified();
 
     const result = JSON.parse(store['gl_learn_practice']);
-    expect(result.v).toBe(4);
+    expect(result.v).toBe(5);
     expect(result.theta).toBeDefined();
     expect(result.adaptive).toBeDefined();
     expect(result.adaptive.pG).toBeNull();
+    expect(result.adaptive.audioFeatures).toEqual({ calibratedNoiseFloor: null, avgOnsetStrength: null });
   });
 });

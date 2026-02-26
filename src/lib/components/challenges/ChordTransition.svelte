@@ -16,6 +16,7 @@
   let fbFlash = $state(false);
 
   const hold = createHoldDetector();
+  let centsBuffer = [];
 
   function resolveChord(shapeId, typeId, rootIdx, isRecall) {
     const sh = STANDARD_SHAPES.find(s => s.id === shapeId);
@@ -33,6 +34,7 @@
   export function prepare(inner, isRecall) {
     recall = isRecall;
     hold.reset();
+    centsBuffer = [];
     const { fromShapeId, fromTypeId, fromRootIdx, toShapeId, toTypeId, toRootIdx } = inner;
     const from = resolveChord(fromShapeId, fromTypeId, fromRootIdx, isRecall);
     const to = resolveChord(toShapeId, toTypeId, toRootIdx, isRecall);
@@ -59,6 +61,8 @@
     const ok = nm && midiOk;
     showDetected(note, cents, hz, ok);
     if (nm && !midiOk) { setMsg(`Right note, play on ${STRING_NAMES[voice.str]} string!`, true); }
+    if (ok) centsBuffer.push(cents);
+    else centsBuffer = [];
     hold.check(ok, true, () => {
       voiceDone[voiceIdx] = true;
       voiceDone = [...voiceDone];
@@ -78,9 +82,17 @@
           const firstVoice = toChallenge.sortedVoices[0];
           setMsg(`Now play ${toChallenge.chordName}: ${firstVoice.note} on ${STRING_NAMES[firstVoice.str]}`, false);
         } else {
+          const extraMeta = {};
+          if (centsBuffer.length > 0) {
+            const avg = centsBuffer.reduce((a, b) => a + b, 0) / centsBuffer.length;
+            const variance = centsBuffer.reduce((s, v) => s + (v - avg) ** 2, 0) / centsBuffer.length;
+            extraMeta.avgCents = Math.round(avg * 10) / 10;
+            extraMeta.stdCents = Math.round(Math.sqrt(variance) * 10) / 10;
+          }
+          centsBuffer = [];
           fbSuccess = true;
           fbFlash = true;
-          onComplete(40, 3);
+          onComplete(40, 3, extraMeta);
           setTimeout(() => { fbSuccess = false; fbFlash = false; }, 1200);
         }
       } else {
@@ -93,6 +105,7 @@
   export function handleSilence() {
     showDetected(null, 0, 0, false);
     hold.reset();
+    centsBuffer = [];
   }
 </script>
 

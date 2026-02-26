@@ -18,11 +18,13 @@
   let fbFlash = $state(false);
 
   const hold = createHoldDetector();
+  let centsBuffer = [];
 
   export function prepare(inner, isRecall) {
     item = inner;
     recall = isRecall;
     hold.reset();
+    centsBuffer = [];
     ref = inner.ref;
     interval = inner.interval;
     target = inner.targetNote;
@@ -46,14 +48,24 @@
     if (!target) return;
     const ok = note === target;
     showDetected(note, cents, hz, ok);
+    if (ok) centsBuffer.push(cents);
+    else centsBuffer = [];
     hold.check(ok, true, () => {
+      const extraMeta = {};
+      if (centsBuffer.length > 0) {
+        const avg = centsBuffer.reduce((a, b) => a + b, 0) / centsBuffer.length;
+        const variance = centsBuffer.reduce((s, v) => s + (v - avg) ** 2, 0) / centsBuffer.length;
+        extraMeta.avgCents = Math.round(avg * 10) / 10;
+        extraMeta.stdCents = Math.round(Math.sqrt(variance) * 10) / 10;
+      }
+      centsBuffer = [];
       targetDisplay = target;
       targetHidden = false;
       showRecallPlaceholder = false;
       dotColor = '#4ECB71';
       fbSuccess = true;
       fbFlash = true;
-      onComplete(10, 2);
+      onComplete(10, 2, extraMeta);
       setTimeout(() => { fbSuccess = false; fbFlash = false; }, recall ? 1200 : 800);
     }, onWrong);
   }
@@ -61,6 +73,7 @@
   export function handleSilence() {
     showDetected(null, 0, 0, false);
     hold.reset();
+    centsBuffer = [];
   }
 
   function dotCx(fret, fretLeft, fretWidth, dotRadius, startFret) {

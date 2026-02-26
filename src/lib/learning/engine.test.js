@@ -591,14 +591,14 @@ describe('persistence v3', () => {
     expect(rec.attempts).toBe(2);
   });
 
-  it('saves with version 4 and includes theta and adaptive', () => {
-    const engine = new LearningEngine(makeConfig(), 'test-v4');
+  it('saves with version 5 and includes theta and adaptive', () => {
+    const engine = new LearningEngine(makeConfig(), 'test-v5');
     const item = engine.next();
     engine.report(item, true, 1000);
     engine.save();
 
-    const raw = JSON.parse(store['gl_learn_test-v4']);
-    expect(raw.v).toBe(4);
+    const raw = JSON.parse(store['gl_learn_test-v5']);
+    expect(raw.v).toBe(5);
     expect(raw.theta).toBeGreaterThan(0);
     expect(raw.items).toBeDefined();
     expect(raw.adaptive).toBeDefined();

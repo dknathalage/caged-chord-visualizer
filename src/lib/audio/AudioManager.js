@@ -1,6 +1,68 @@
 import { yinDetect, rms, freqToNote } from './pitch.js';
+import { harmonicCorrect } from './analysis/harmonics.js';
+import { NoiseCalibrator } from './analysis/calibration.js';
+import { detectArticulation } from './analysis/features.js';
+import { buildChordTemplates, matchChord } from './analysis/templates.js';
+import { OnsetDetector, IOITracker } from './analysis/onset.js';
 import { CONSTANTS } from '../learning/constants.js';
 import { DEFAULTS } from '../learning/defaults.js';
+import { StableNoteTracker } from './StableNoteTracker.js';
+
+class ChordDetector {
+  constructor() {
+    this._chromaBuffer = [];
+    this._lastChord = null;
+    this._stableCount = 0;
+    this._templates = null;
+  }
+
+  update(chromagram) {
+    if (!this._templates) {
+      this._templates = buildChordTemplates();
+    }
+
+    this._chromaBuffer.push(chromagram);
+    if (this._chromaBuffer.length > 5) this._chromaBuffer.shift();
+
+    // Average chromagram over buffer
+    const avg = new Float32Array(12);
+    for (const c of this._chromaBuffer) {
+      for (let i = 0; i < 12; i++) avg[i] += c[i];
+    }
+    // Re-normalize
+    let norm = 0;
+    for (let i = 0; i < 12; i++) norm += avg[i] * avg[i];
+    norm = Math.sqrt(norm);
+    if (norm > 0) for (let i = 0; i < 12; i++) avg[i] /= norm;
+
+    const matches = matchChord(avg, this._templates);
+    if (matches.length === 0) {
+      this._lastChord = null;
+      this._stableCount = 0;
+      return null;
+    }
+
+    const top = matches[0];
+    if (this._lastChord && top.chordName === this._lastChord.chordName) {
+      this._stableCount++;
+    } else {
+      this._lastChord = top;
+      this._stableCount = 1;
+    }
+
+    // Require 3+ stable frames
+    if (this._stableCount >= 3) {
+      return { ...top, chromagram: avg };
+    }
+    return null;
+  }
+
+  reset() {
+    this._chromaBuffer = [];
+    this._lastChord = null;
+    this._stableCount = 0;
+  }
+}
 
 export class AudioManager extends EventTarget {
   constructor(params) {
@@ -11,8 +73,16 @@ export class AudioManager extends EventTarget {
     this.rafId = null;
     this.buffer = null;
     this.cachedSampleRate = null;
-    this._stableFrames = params?.audio?.stableFrames ?? DEFAULTS.audio.stableFrames;
+    this._params = params;
+    this._tracker = new StableNoteTracker(params?.audio?.stableFrames ?? DEFAULTS.audio.stableFrames);
     this._rmsThreshold = params?.audio?.rmsThreshold ?? DEFAULTS.audio.rmsThreshold;
+    this._harmonicCorrection = params?.audio?.harmonicCorrectionEnabled ?? DEFAULTS.audio.harmonicCorrectionEnabled;
+    this._useWorklet = false;
+    this._workletNode = null;
+    this._calibrator = null;
+    this._chordDetector = new ChordDetector();
+    this._onsetDetector = new OnsetDetector();
+    this._ioiTracker = new IOITracker();
   }
 
   async start() {
@@ -23,15 +93,42 @@ export class AudioManager extends EventTarget {
         audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}
       });
       const src = ctx.createMediaStreamSource(stream);
-      const an = ctx.createAnalyser();
-      an.fftSize = CONSTANTS.audio.FFT_SIZE;
-      src.connect(an);
       this.audioCtx = ctx;
-      this.analyser = an;
       this.stream = stream;
-      this.buffer = new Float32Array(an.fftSize);
       this.cachedSampleRate = ctx.sampleRate;
-      return { ok: true };
+
+      // Try worklet first
+      try {
+        const url = new URL('./worklet/guitar-processor.js', import.meta.url);
+        await ctx.audioWorklet.addModule(url);
+        this._workletNode = new AudioWorkletNode(ctx, 'guitar-processor');
+        src.connect(this._workletNode);
+        this._workletNode.port.onmessage = (e) => this._handleWorkletMessage(e.data);
+        this._workletNode.port.postMessage({
+          type: 'configure',
+          config: {
+            yinThreshold: this._params?.audio?.yinThreshold ?? DEFAULTS.audio.yinThreshold,
+            confidenceThreshold: this._params?.audio?.confidenceThreshold ?? DEFAULTS.audio.confidenceThreshold,
+            rmsThreshold: this._rmsThreshold,
+            sampleRate: ctx.sampleRate,
+            harmonicCorrection: this._harmonicCorrection,
+            enableFeatures: this._params?.audio?.enableFeatures ?? DEFAULTS.audio.enableFeatures,
+            enableChromagram: this._params?.audio?.enableChromagram ?? false,
+            enableOnset: this._params?.audio?.enableOnset ?? false,
+          }
+        });
+        this._useWorklet = true;
+        return { ok: true };
+      } catch (workletErr) {
+        // Fallback to RAF with AnalyserNode
+        console.warn('AudioWorklet not available, falling back to RAF:', workletErr.message);
+        const an = ctx.createAnalyser();
+        an.fftSize = CONSTANTS.audio.FFT_SIZE;
+        src.connect(an);
+        this.analyser = an;
+        this.buffer = new Float32Array(an.fftSize);
+        return { ok: true };
+      }
     } catch (err) {
       const name = err && err.name;
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
@@ -44,49 +141,158 @@ export class AudioManager extends EventTarget {
     }
   }
 
-  stop() {
-    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
-    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
-    if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null; }
-    this.analyser = null;
-    this.buffer = null;
+  _handleWorkletMessage(data) {
+    if (data.type === 'calibration') {
+      this._rmsThreshold = data.rmsThreshold;
+      this.dispatchEvent(new CustomEvent('calibrated', {
+        detail: { noiseFloor: data.noiseFloor, rmsThreshold: data.rmsThreshold }
+      }));
+      return;
+    }
+    if (data.type !== 'analysis') return;
+
+    if (!data.pitch) {
+      if (this._tracker.lastNote !== null) {
+        this._tracker.reset();
+        this.dispatchEvent(new CustomEvent('silence'));
+      }
+      return;
+    }
+
+    const { note, cents, hz, semi, confidence } = data.pitch;
+    const result = this._tracker.update(note);
+    if (result.stable) {
+      const detail = {
+        note, cents, hz, semitones: semi,
+        confidence: confidence ?? null,
+        rms: data.rms ?? null,
+        rmsDb: data.features?.rmsDb ?? null,
+        centsDelta: data.features?.centsDelta ?? null,
+        freqTrajectory: data.features?.freqTrajectory ?? null,
+        articulation: null,
+      };
+
+      if (data.features?.freqTrajectory?.length >= 5) {
+        detail.articulation = detectArticulation(data.features.freqTrajectory, hz);
+      }
+
+      this.dispatchEvent(new CustomEvent('detect', { detail }));
+    }
+
+    // Chord detection from chromagram
+    if (data.chromagram) {
+      const chord = this._chordDetector.update(data.chromagram);
+      if (chord) {
+        this.dispatchEvent(new CustomEvent('chord', {
+          detail: { root: chord.root, rootName: chord.rootName, typeId: chord.typeId, chordName: chord.chordName, score: chord.score, chromagram: chord.chromagram }
+        }));
+      }
+    }
+
+    // Onset detection from spectral flux
+    if (data.spectralFlux != null) {
+      const onset = this._onsetDetector.detect(data.spectralFlux, data.ts * 1000);
+      if (onset) {
+        this._ioiTracker.addOnset(onset.timeMs);
+        this.dispatchEvent(new CustomEvent('onset', {
+          detail: { strength: onset.strength, timeMs: onset.timeMs, spectralFlux: data.spectralFlux }
+        }));
+      }
+    }
   }
 
+  get ioiTracker() { return this._ioiTracker; }
+
   startLoop() {
-    let prevNote = null;
-    let stableCount = 0;
-    const STABLE_FRAMES = this._stableFrames;
-    const RMS_THRESHOLD = this._rmsThreshold;
+    if (this._useWorklet) return; // worklet handles its own loop
+    this._startRafLoop();
+  }
+
+  calibrate(params) {
+    const targetFrames = params?.targetFrames ?? DEFAULTS.calibration.targetFrames;
+    const safetyMultiplier = params?.safetyMultiplier ?? DEFAULTS.calibration.safetyMultiplier;
+
+    if (this._useWorklet) {
+      this._workletNode.port.postMessage({
+        type: 'calibrate',
+        targetFrames,
+        safetyMultiplier,
+      });
+    } else {
+      this._calibrator = new NoiseCalibrator({ targetFrames, safetyMultiplier });
+    }
+  }
+
+  _startRafLoop() {
     const FREQ_MIN = CONSTANTS.audio.FREQ_MIN;
     const FREQ_MAX = CONSTANTS.audio.FREQ_MAX;
     const loop = () => {
       if (!this.analyser) return;
       this.analyser.getFloatTimeDomainData(this.buffer);
-      if (rms(this.buffer) < RMS_THRESHOLD) {
-        prevNote = null; stableCount = 0;
-        this.dispatchEvent(new CustomEvent('silence'));
+      const r = rms(this.buffer);
+
+      // Calibration in RAF path
+      if (this._calibrator && !this._calibrator.calibrated) {
+        const calResult = this._calibrator.addFrame(r);
+        if (calResult) {
+          this._rmsThreshold = calResult.rmsThreshold;
+          this._calibrator = null;
+          this.dispatchEvent(new CustomEvent('calibrated', {
+            detail: calResult
+          }));
+        }
         this.rafId = requestAnimationFrame(loop);
         return;
       }
-      const hz = yinDetect(this.buffer, this.audioCtx.sampleRate);
-      if (!hz || hz < FREQ_MIN || hz > FREQ_MAX) {
-        prevNote = null; stableCount = 0;
-        this.dispatchEvent(new CustomEvent('silence'));
+
+      if (r < this._rmsThreshold) {
+        if (this._tracker.lastNote !== null) {
+          this._tracker.reset();
+          this.dispatchEvent(new CustomEvent('silence'));
+        }
         this.rafId = requestAnimationFrame(loop);
         return;
+      }
+      let hz = yinDetect(this.buffer, this.audioCtx.sampleRate);
+      if (!hz || hz < FREQ_MIN || hz > FREQ_MAX) {
+        if (this._tracker.lastNote !== null) {
+          this._tracker.reset();
+          this.dispatchEvent(new CustomEvent('silence'));
+        }
+        this.rafId = requestAnimationFrame(loop);
+        return;
+      }
+      // Harmonic correction for wound strings
+      if (this._harmonicCorrection && hz > 160 && hz / 2 >= 50) {
+        hz = harmonicCorrect(hz, this.buffer, this.audioCtx.sampleRate);
       }
       const {note, cents, semi} = freqToNote(hz);
-      if (note === prevNote) {
-        stableCount++;
-      } else {
-        prevNote = note;
-        stableCount = 1;
-      }
-      if (stableCount >= STABLE_FRAMES) {
-        this.dispatchEvent(new CustomEvent('detect', { detail: { note, cents, hz, semitones: semi } }));
+      const result = this._tracker.update(note);
+      if (result.stable) {
+        this.dispatchEvent(new CustomEvent('detect', {
+          detail: { note, cents, hz, semitones: semi, confidence: null, rms: null, rmsDb: null, centsDelta: null, freqTrajectory: null, articulation: null }
+        }));
       }
       this.rafId = requestAnimationFrame(loop);
     };
     loop();
+  }
+
+  stop() {
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    if (this._workletNode) {
+      this._workletNode.disconnect();
+      this._workletNode = null;
+    }
+    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null; }
+    this.analyser = null;
+    this.buffer = null;
+    this._tracker.reset();
+    this._useWorklet = false;
+    this._calibrator = null;
+    this._chordDetector.reset();
+    this._onsetDetector.reset();
+    this._ioiTracker.reset();
   }
 }

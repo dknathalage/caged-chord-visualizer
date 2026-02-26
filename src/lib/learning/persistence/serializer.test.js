@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { serialize, deserialize, migrateV1 } from './serializer.js';
 
 // ──────────────────────────────────────────────
-// Persistence v4: Adaptive Fields
+// Persistence v5: Adaptive Fields + Intonation
 // ──────────────────────────────────────────────
 
 function makeState(overrides = {}) {
@@ -14,6 +14,7 @@ function makeState(overrides = {}) {
     lastSeen: 2, lastSeenTs: Date.now(),
     hist: [true, true, false], streak: 0, clusters: ['default'],
     confusions: [],
+    centsHistory: [], avgCents: null, techniqueScores: [],
   });
   const clusters = new Map();
   clusters.set('default', { correct: 2, total: 3 });
@@ -40,18 +41,22 @@ const DEFAULT_ADAPTIVE = {
     confusionDrill: { helped: 0, total: 0 },
   },
   featureErrorRates: {},
+  audioFeatures: { calibratedNoiseFloor: null, avgOnsetStrength: null },
 };
 
-describe('serialize v4', () => {
-  it('saves with version 4 and includes adaptive field', () => {
+describe('serialize v5', () => {
+  it('saves with version 5 and includes adaptive field', () => {
     const state = makeState();
     const raw = JSON.parse(serialize(state));
 
-    expect(raw.v).toBe(4);
+    expect(raw.v).toBe(5);
     expect(raw.adaptive).toEqual(DEFAULT_ADAPTIVE);
     expect(raw.theta).toBe(0.3);
     expect(raw.items.A).toBeDefined();
     expect(raw.items.A.S).toBe(2);
+    expect(raw.items.A.centsHistory).toEqual([]);
+    expect(raw.items.A.avgCents).toBeNull();
+    expect(raw.items.A.techniqueScores).toEqual([]);
   });
 
   it('preserves custom adaptive values on save', () => {
@@ -62,17 +67,18 @@ describe('serialize v4', () => {
         confusionDrill: { helped: 3, total: 7 },
       },
       featureErrorRates: { 'note_C': 0.15 },
+      audioFeatures: { calibratedNoiseFloor: -40, avgOnsetStrength: 0.7 },
     };
     const state = makeState({ adaptive: custom });
     const raw = JSON.parse(serialize(state));
 
-    expect(raw.v).toBe(4);
+    expect(raw.v).toBe(5);
     expect(raw.adaptive).toEqual(custom);
   });
 });
 
-describe('deserialize v4', () => {
-  it('loads v3 data and migrates to v4 with default adaptive', () => {
+describe('deserialize v4 -> v5 migration', () => {
+  it('loads v3 data and migrates to v5 with default adaptive', () => {
     const v3Data = JSON.stringify({
       v: 3,
       ts: Date.now(),
@@ -96,14 +102,17 @@ describe('deserialize v4', () => {
     });
 
     const result = deserialize(v3Data);
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(5);
     expect(result.adaptive).toEqual(DEFAULT_ADAPTIVE);
     expect(result.questionNumber).toBe(5);
     expect(result.theta).toBeCloseTo(0.3);
     expect(result.items.has('A')).toBe(true);
+    expect(result.items.get('A').centsHistory).toEqual([]);
+    expect(result.items.get('A').avgCents).toBeNull();
+    expect(result.items.get('A').techniqueScores).toEqual([]);
   });
 
-  it('loads v4 data and preserves adaptive values', () => {
+  it('loads v4 data and migrates to v5 preserving adaptive values', () => {
     const customAdaptive = {
       pG: 0.08,
       pS: 0.12,
@@ -138,13 +147,17 @@ describe('deserialize v4', () => {
     });
 
     const result = deserialize(v4Data);
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(5);
     expect(result.adaptive.pG).toBe(0.08);
     expect(result.adaptive.pS).toBe(0.12);
     expect(result.adaptive.pT).toBe(0.25);
     expect(result.adaptive.drillEffectiveness.microDrill).toEqual({ helped: 5, total: 10 });
     expect(result.adaptive.drillEffectiveness.confusionDrill).toEqual({ helped: 3, total: 7 });
     expect(result.adaptive.featureErrorRates).toEqual({ 'note_C': 0.15, 'note_F#': 0.4 });
+    expect(result.adaptive.audioFeatures).toEqual({ calibratedNoiseFloor: null, avgOnsetStrength: null });
+    expect(result.items.get('B').centsHistory).toEqual([]);
+    expect(result.items.get('B').avgCents).toBeNull();
+    expect(result.items.get('B').techniqueScores).toEqual([]);
   });
 
   it('returns null for unsupported versions', () => {
@@ -175,12 +188,12 @@ describe('deserialize v4', () => {
     });
 
     const result = deserialize(v4NoAdaptive);
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(5);
     expect(result.adaptive).toEqual(DEFAULT_ADAPTIVE);
   });
 });
 
-describe('round-trip serialize/deserialize v4', () => {
+describe('round-trip serialize/deserialize v5', () => {
   it('preserves all fields through round-trip', () => {
     const customAdaptive = {
       pG: 0.07,
@@ -191,21 +204,26 @@ describe('round-trip serialize/deserialize v4', () => {
         confusionDrill: { helped: 0, total: 0 },
       },
       featureErrorRates: { 'note_E': 0.2 },
+      audioFeatures: { calibratedNoiseFloor: -35, avgOnsetStrength: 0.5 },
     };
     const state = makeState({ adaptive: customAdaptive });
 
     const json = serialize(state);
     const result = deserialize(json);
 
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(5);
     expect(result.adaptive.pG).toBe(0.07);
     expect(result.adaptive.pS).toBe(0.10);
     expect(result.adaptive.pT).toBeNull();
     expect(result.adaptive.drillEffectiveness.microDrill).toEqual({ helped: 3, total: 5 });
     expect(result.adaptive.featureErrorRates['note_E']).toBe(0.2);
+    expect(result.adaptive.audioFeatures).toEqual({ calibratedNoiseFloor: -35, avgOnsetStrength: 0.5 });
     expect(result.questionNumber).toBe(3);
     expect(result.theta).toBe(0.3);
     expect(result.items.has('A')).toBe(true);
+    expect(result.items.get('A').centsHistory).toEqual([]);
+    expect(result.items.get('A').avgCents).toBeNull();
+    expect(result.items.get('A').techniqueScores).toEqual([]);
   });
 
   it('round-trips default adaptive when none provided', () => {
@@ -213,13 +231,13 @@ describe('round-trip serialize/deserialize v4', () => {
     const json = serialize(state);
     const result = deserialize(json);
 
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(5);
     expect(result.adaptive).toEqual(DEFAULT_ADAPTIVE);
   });
 });
 
 describe('migrateV1 includes adaptive', () => {
-  it('v1 migration produces v4-compatible state with default adaptive', () => {
+  it('v1 migration produces v5-compatible state with default adaptive', () => {
     const v1Data = {
       v: 1,
       ts: Date.now(),
@@ -240,9 +258,12 @@ describe('migrateV1 includes adaptive', () => {
     };
 
     const result = migrateV1(v1Data);
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(5);
     expect(result.adaptive).toEqual(DEFAULT_ADAPTIVE);
     expect(result.items.has('A')).toBe(true);
+    expect(result.items.get('A').centsHistory).toEqual([]);
+    expect(result.items.get('A').avgCents).toBeNull();
+    expect(result.items.get('A').techniqueScores).toEqual([]);
     expect(result.theta).toBe(0.05);
   });
 });

@@ -1,6 +1,6 @@
 import { clamp } from '../math-utils.js';
 
-const VERSION = 4;
+const VERSION = 5;
 
 const DEFAULT_ADAPTIVE = {
   pG: null,
@@ -11,6 +11,7 @@ const DEFAULT_ADAPTIVE = {
     confusionDrill: { helped: 0, total: 0 },
   },
   featureErrorRates: {},
+  audioFeatures: { calibratedNoiseFloor: null, avgOnsetStrength: null },
 };
 
 export function serialize(state) {
@@ -23,6 +24,8 @@ export function serialize(state) {
       lastSeen: rec.lastSeen, lastSeenTs: rec.lastSeenTs,
       hist: rec.hist, streak: rec.streak, clusters: rec.clusters,
       confusions: rec.confusions,
+      centsHistory: rec.centsHistory, avgCents: rec.avgCents,
+      techniqueScores: rec.techniqueScores,
     };
   }
   const clustersObj = {};
@@ -57,6 +60,20 @@ export function deserialize(raw) {
     data.adaptive = DEFAULT_ADAPTIVE;
   }
 
+  if (data.v === 4) {
+    // v4 → v5: add intonation/technique fields + audioFeatures
+    data.v = 5;
+    if (data.items) {
+      for (const r of Object.values(data.items)) {
+        r.centsHistory = r.centsHistory ?? [];
+        r.avgCents = r.avgCents ?? null;
+        r.techniqueScores = r.techniqueScores ?? [];
+      }
+    }
+    if (!data.adaptive) data.adaptive = { ...DEFAULT_ADAPTIVE };
+    data.adaptive.audioFeatures = data.adaptive.audioFeatures ?? { calibratedNoiseFloor: null, avgOnsetStrength: null };
+  }
+
   if (data.v !== VERSION) return null;
 
   const items = new Map();
@@ -79,6 +96,9 @@ export function deserialize(raw) {
         streak: r.streak ?? 0,
         clusters: r.clusters ?? [],
         confusions: r.confusions ?? [],
+        centsHistory: r.centsHistory ?? [],
+        avgCents: r.avgCents ?? null,
+        techniqueScores: r.techniqueScores ?? [],
       });
     }
   }
@@ -126,6 +146,9 @@ export function migrateV1(data) {
         streak: r.streak ?? 0,
         clusters: r.clusters ?? [],
         confusions: [],
+        centsHistory: [],
+        avgCents: null,
+        techniqueScores: [],
       });
     }
   }
