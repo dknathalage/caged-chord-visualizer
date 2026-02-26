@@ -5,7 +5,7 @@
  * the best correction that passes its threshold, or the original frequency.
  *
  * Guitar fundamentals are usually the lowest partial, so sub-octave and 3rd
- * harmonic corrections are preferred (threshold 0.80) over super-octave (0.70).
+ * harmonic corrections are preferred (threshold 0.80) over super-octave (0.55).
  *
  * @param {number} hz - Detected frequency from YIN
  * @param {Float32Array} buffer - Audio buffer used for detection
@@ -34,11 +34,11 @@ export function harmonicCorrect(hz, buffer, sampleRate) {
   // Candidates: [correctedFreq, tau, threshold]
   // Sub-octave (freq/2): tau * 2, threshold 0.80 — prefer lower fundamental
   // 3rd harmonic (freq/3): tau * 3, threshold 0.80 — prefer lower fundamental
-  // Super-octave (freq*2): tau / 2, threshold 0.70 — stricter, less common
+  // Super-octave (freq*2): tau / 2, threshold 0.55 — stricter, less common
   const candidates = [
     { freq: hz / 2, tau: tauOriginal * 2, threshold: 0.80 },
     { freq: hz / 3, tau: tauOriginal * 3, threshold: 0.80 },
-    { freq: hz * 2, tau: Math.round(tauOriginal / 2), threshold: 0.70 },
+    { freq: hz * 2, tau: Math.round(tauOriginal / 2), threshold: 0.55 },
   ];
 
   let bestFreq = hz;

@@ -94,7 +94,7 @@ export function yinMultiCandidate(buf, sr, params, prevFreq = null, K = 5) {
   // CMND values due to normalization, so we cannot rank by raw CMND alone.
   // Instead, the first candidate gets a bonus. Other candidates can only win
   // if transition cost (from prevFreq) tips the balance.
-  const SUBHARMONIC_PENALTY = 0.20;
+  const SUBHARMONIC_PENALTY = 0.30;
 
   // Keep top K by CMND among all candidates
   const sorted = candidates.slice().sort((a, b) => a.cmnd - b.cmnd);

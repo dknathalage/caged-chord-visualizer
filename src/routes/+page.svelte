@@ -2,21 +2,26 @@
   import { base } from '$app/paths';
   import ProgressRing from '$lib/components/svg/ProgressRing.svelte';
   import { loadUnifiedMastery } from '$lib/progress.js';
-  import { TYPES } from '$lib/learning/configs/unified.js';
+  import { TYPES, loadTypeFlags } from '$lib/learning/configs/unified.js';
   import { migrateToUnified } from '$lib/learning/migration.js';
 
   migrateToUnified();
 
   let um = $state(loadUnifiedMastery());
+  const flags = loadTypeFlags();
 
   let overallPct = $derived(um ? Math.round(um.overall * 100) : 0);
 
   let perType = $derived.by(() => {
-    if (!um) return TYPES.map(t => ({ ...t, avgPL: 0, count: 0 }));
+    if (!um) return TYPES.map(t => {
+      const enabled = flags[t.id] !== undefined ? flags[t.id] : t.enabled;
+      return { ...t, avgPL: 0, count: 0, enabled };
+    });
     return TYPES.map(t => {
       const typeItems = um.items.filter(i => i.key.startsWith(t.id + ':'));
       const avgPL = typeItems.length > 0 ? typeItems.reduce((s, i) => s + i.pL, 0) / typeItems.length : 0;
-      return { ...t, avgPL, count: typeItems.length };
+      const enabled = flags[t.id] !== undefined ? flags[t.id] : t.enabled;
+      return { ...t, avgPL, count: typeItems.length, enabled };
     });
   });
 </script>
@@ -46,7 +51,7 @@
 
   <div class="type-bars">
     {#each perType as ts}
-      <div class="type-bar">
+      <div class="type-bar" class:type-bar-disabled={!ts.enabled}>
         <div class="type-bar-name">{ts.name}</div>
         <div class="type-bar-track">
           <div class="type-bar-fill" style="width:{Math.round(ts.avgPL * 100)}%"></div>
@@ -201,6 +206,9 @@
     color: var(--mt);
     width: 36px;
     text-align: right;
+  }
+  .type-bar-disabled {
+    opacity: 0.35;
   }
 
   .practice-btn {

@@ -32,7 +32,7 @@ export const DEFAULTS = Object.freeze({
     reviewUrgency: Object.freeze({ mastered: 0.3, unmastered: 0.5 }),
     confusionBoost: 0.3,
     difficultyMatchWeight: 0.3,
-    interleavePenalty: -0.3,
+    interleavePenalty: -0.05,
     fatigueBias: 0.3,
     coverageBonus: Object.freeze({ sparse: 0.2, lowPL: 0.15 }),
     stuckPenalty: -1.5,
@@ -66,10 +66,23 @@ export const DEFAULTS = Object.freeze({
     recoveryThreshold: 0.90,
   }),
 
-  coldStart: Object.freeze({ minQuestions: 7 }),
+  coldStart: Object.freeze({ minQuestions: 12 }),
+
+  focus: Object.freeze({
+    burstMin: 5,
+    burstMax: 8,
+    exitAccuracy: 0.80,
+    exitMinQuestions: 3,
+    candidateSplit: Object.freeze({ focused: 6, weak: 2, explore: 2 }),
+    scaffoldAfterFail: true,
+    scaffoldMaxPerBurst: 2,
+    typeContinuityBonus: 0.25,
+    clusterContinuityBonus: 0.15,
+  }),
 
   audio: Object.freeze({
     stableFrames: 3,
+    silenceDebounceFrames: 5,
     rmsThreshold: 0.01,
     yinThreshold: 0.15,
     confidenceThreshold: 0.85,
@@ -84,11 +97,11 @@ export const DEFAULTS = Object.freeze({
   }),
 
   holdDetection: Object.freeze({
-    confirmMs: 300,
-    wrongMs: 600,
-    cooldownMs: 2000,
+    confirmMs: 80,
+    wrongMs: 80,
+    cooldownMs: 0,
     adaptiveConfirmMs: true,
-    confirmMsRange: Object.freeze([200, 500]),
+    confirmMsRange: Object.freeze([80, 150]),
   }),
 
   transfer: Object.freeze({

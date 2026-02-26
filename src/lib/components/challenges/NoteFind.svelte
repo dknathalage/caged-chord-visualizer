@@ -35,8 +35,10 @@
   export function handleDetection(note, cents, hz, semi) {
     if (!item) return;
     const nm = note === item.note;
-    const midiDiff = Math.abs((semi + 69) - item.midi);
-    const octOk = !recall || (midiDiff % 12) <= 1 || (midiDiff % 12) >= 11;
+    const detectedMidi = semi + 69;
+    const midiDiff = Math.abs(detectedMidi - item.midi);
+    const octRem = midiDiff % 12;
+    const octOk = midiDiff <= 1 || octRem <= 1 || octRem >= 11;
     const ok = nm && octOk;
     showDetected(note, cents, hz, ok);
     if (nm && !octOk) { setMsg('Right note, wrong string!', true); }

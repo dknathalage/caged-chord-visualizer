@@ -11,7 +11,7 @@
   let fbFlash = $state(false);
 
   let holdStart = 0;
-  const HOLD_MS = 500;
+  const HOLD_MS = 150;
 
   export function prepare(inner, isRecall) {
     item = inner;

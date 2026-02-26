@@ -71,6 +71,16 @@ export class LearningEngine {
     this.thetaHistory = [];
     this.plateauDetected = false;
 
+    // Focus burst state (transient — not persisted)
+    this.focusType = null;
+    this.focusCluster = null;
+    this.focusBurstCount = 0;
+    this.focusBurstCorrect = 0;
+    this.focusBurstTarget = 0;
+    this.scaffoldQueue = [];
+    this.scaffoldsThisBurst = 0;
+    this._lastFocusType = null;
+
     if (exerciseId) this._load();
   }
 
@@ -159,20 +169,72 @@ export class LearningEngine {
       return item;
     }
 
-    // Collect candidates: all known items + 10 new random ones
+    // Check scaffold queue first — return scaffold items with priority
+    if (this.scaffoldQueue.length > 0) {
+      const item = this.scaffoldQueue.shift();
+      this._ensureItem(item);
+      this._trackRecent(item);
+      this.lastItem = item;
+      return item;
+    }
+
+    // Set/maintain current focus burst
+    this._pickFocus();
+
+    // Collect candidates: all known items + structured new candidates
     const candidates = [];
+    const enabledTypeIds = this.config.getEnabledTypeIds ? this.config.getEnabledTypeIds() : null;
 
     for (const [key, record] of this.items) {
       const item = this.config.itemFromKey(key);
       if (!item) continue;
+      if (enabledTypeIds && item._type && !enabledTypeIds.has(item._type)) continue;
       candidates.push({ item, record, isNew: false });
     }
 
-    for (let i = 0; i < 10; i++) {
+    const split = this.params.focus?.candidateSplit ?? { focused: 6, weak: 2, explore: 2 };
+    const seen = new Set(candidates.map(c => this.config.itemKey(c.item)));
+
+    // Generate focused candidates (from focus type)
+    for (let i = 0; i < split.focused; i++) {
+      let item;
+      if (this.focusType && this.config.genFromType) {
+        item = this.config.genFromType(this.focusType, this.lastItem, this);
+      } else {
+        item = this.config.genRandom(this.lastItem, this);
+      }
+      const key = this.config.itemKey(item);
+      if (!seen.has(key)) {
+        candidates.push({ item, record: null, isNew: true });
+        seen.add(key);
+      }
+    }
+
+    // Generate weak-cluster candidates
+    const weakCluster = this._findWeakCluster();
+    for (let i = 0; i < split.weak; i++) {
+      let item;
+      if (weakCluster && this.config.genFromCluster) {
+        try {
+          item = this.config.genFromCluster(weakCluster, this.lastItem, this);
+        } catch { item = this.config.genRandom(this.lastItem, this); }
+      } else {
+        item = this.config.genRandom(this.lastItem, this);
+      }
+      const key = this.config.itemKey(item);
+      if (!seen.has(key)) {
+        candidates.push({ item, record: null, isNew: true });
+        seen.add(key);
+      }
+    }
+
+    // Generate explore candidates (random)
+    for (let i = 0; i < split.explore; i++) {
       const item = this.config.genRandom(this.lastItem, this);
       const key = this.config.itemKey(item);
-      if (!this.items.has(key)) {
+      if (!seen.has(key)) {
         candidates.push({ item, record: null, isNew: true });
+        seen.add(key);
       }
     }
 
@@ -306,6 +368,19 @@ export class LearningEngine {
       const features = this.config.itemFeatures(item);
       if (features) {
         updateFeatureErrors(this.adaptive.featureErrorRates, item, ok, features);
+      }
+    }
+
+    // Focus burst tracking
+    this.focusBurstCount++;
+    if (ok) this.focusBurstCorrect++;
+    if (!ok && this.params.focus?.scaffoldAfterFail && this.scaffoldsThisBurst < (this.params.focus?.scaffoldMaxPerBurst ?? 2)) {
+      if (this.config.pickScaffold) {
+        const scaffolds = this.config.pickScaffold(item, this.focusCluster);
+        if (scaffolds && scaffolds.length > 0) {
+          this.scaffoldQueue.push(...scaffolds);
+          this.scaffoldsThisBurst++;
+        }
       }
     }
 
@@ -446,6 +521,8 @@ export class LearningEngine {
     this._drillTracker = createDrillTracker();
     this._drillTracker.state.microDrill = this.adaptive.drillEffectiveness.microDrill;
     this._drillTracker.state.confusionDrill = this.adaptive.drillEffectiveness.confusionDrill;
+    this._resetFocus();
+    this._lastFocusType = null;
   }
 
   save() {
@@ -454,6 +531,126 @@ export class LearningEngine {
 
   getCoverageMatrix() {
     return getCoverageMatrix(this.items);
+  }
+
+  // --- Focus burst management ---
+
+  _pickFocus() {
+    const focus = this.params.focus;
+
+    // Active burst — check for early exit or continue
+    if (this.focusBurstCount > 0 && this.focusBurstCount < this.focusBurstTarget) {
+      if (this.focusBurstCount >= focus.exitMinQuestions) {
+        const acc = this.focusBurstCorrect / this.focusBurstCount;
+        if (acc >= focus.exitAccuracy) {
+          // Early exit — reset and pick a new focus
+          this._lastFocusType = this.focusType;
+          this._resetFocus();
+        } else {
+          return { type: this.focusType, cluster: this.focusCluster };
+        }
+      } else {
+        return { type: this.focusType, cluster: this.focusCluster };
+      }
+    }
+
+    // Burst complete or no active burst — pick new focus
+    if (this.focusBurstCount >= this.focusBurstTarget && this.focusBurstTarget > 0) {
+      this._lastFocusType = this.focusType;
+      this._resetFocus();
+    }
+
+    // Scan all items by type, compute average pL per type
+    // Item records don't store _type — reconstruct items from keys to get type
+    const typeStats = new Map();
+    const itemTypeMap = new Map(); // key -> _type for reuse below
+    for (const [key, rec] of this.items) {
+      const item = this.config.itemFromKey(key);
+      if (!item || !item._type) continue;
+      itemTypeMap.set(key, item._type);
+      let stats = typeStats.get(item._type);
+      if (!stats) { stats = { sum: 0, count: 0 }; typeStats.set(item._type, stats); }
+      stats.sum += rec.pL;
+      stats.count++;
+    }
+
+    // Find weakest type (lowest avg pL), skipping _lastFocusType
+    let weakestType = null;
+    let weakestAvg = Infinity;
+    for (const [type, stats] of typeStats) {
+      if (type === this._lastFocusType && typeStats.size > 1) continue;
+      const avg = stats.count > 0 ? stats.sum / stats.count : 1;
+      if (avg < weakestAvg) {
+        weakestAvg = avg;
+        weakestType = type;
+      }
+    }
+
+    // Within that type, find cluster with lowest avg pL
+    let weakestCluster = null;
+    if (weakestType) {
+      const clusterStats = new Map();
+      for (const [key, rec] of this.items) {
+        if (itemTypeMap.get(key) !== weakestType) continue;
+        for (const cid of rec.clusters) {
+          let cs = clusterStats.get(cid);
+          if (!cs) { cs = { sum: 0, count: 0 }; clusterStats.set(cid, cs); }
+          cs.sum += rec.pL;
+          cs.count++;
+        }
+      }
+      let weakClAvg = Infinity;
+      for (const [cid, cs] of clusterStats) {
+        const avg = cs.count > 0 ? cs.sum / cs.count : 1;
+        if (avg < weakClAvg) {
+          weakClAvg = avg;
+          weakestCluster = cid;
+        }
+      }
+    }
+
+    this.focusType = weakestType;
+    this.focusCluster = weakestCluster;
+    this.focusBurstCount = 0;
+    this.focusBurstCorrect = 0;
+    this.focusBurstTarget = focus.burstMin + Math.floor(Math.random() * (focus.burstMax - focus.burstMin + 1));
+    this.scaffoldsThisBurst = 0;
+
+    return { type: this.focusType, cluster: this.focusCluster };
+  }
+
+  _resetFocus() {
+    this.focusType = null;
+    this.focusCluster = null;
+    this.focusBurstCount = 0;
+    this.focusBurstCorrect = 0;
+    this.focusBurstTarget = 0;
+    this.scaffoldQueue = [];
+    this.scaffoldsThisBurst = 0;
+  }
+
+  _findWeakCluster() {
+    const clusterStats = new Map();
+    for (const [, rec] of this.items) {
+      if (rec.attempts === 0) continue;
+      for (const cid of rec.clusters) {
+        let cs = clusterStats.get(cid);
+        if (!cs) { cs = { sum: 0, count: 0 }; clusterStats.set(cid, cs); }
+        cs.sum += rec.pL;
+        cs.count++;
+      }
+    }
+    let weakestId = null;
+    let weakestAvg = Infinity;
+    for (const [cid, cs] of clusterStats) {
+      if (cs.count < 2) continue;
+      const avg = cs.sum / cs.count;
+      if (avg < weakestAvg) {
+        weakestAvg = avg;
+        weakestId = cid;
+      }
+    }
+    return weakestId;
   }
 
   // --- Private helpers (delegation + state wiring) ---
@@ -470,6 +667,8 @@ export class LearningEngine {
       plateauDetected: this.plateauDetected,
       allCorrectTimes: this.allCorrectTimes,
       params: this.params,
+      focusType: this.focusType,
+      focusCluster: this.focusCluster,
     };
   }
 

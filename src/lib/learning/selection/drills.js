@@ -21,10 +21,13 @@ export function buildOverdueQueue(items, config, params) {
   const now = Date.now();
   const overdueMax = params?.drills?.overdueMax ?? DEFAULTS.drills.overdueMax;
   const overdue = [];
+  const enabledTypeIds = config.getEnabledTypeIds ? config.getEnabledTypeIds() : null;
   for (const [key, rec] of items) {
     if (rec.due > 0 && rec.due < now) {
       const item = config.itemFromKey(key);
       if (!item) continue; // type was removed
+      // Skip items from disabled types
+      if (enabledTypeIds && item._type && !enabledTypeIds.has(item._type)) continue;
       overdue.push({ item, overdueness: now - rec.due });
     }
   }

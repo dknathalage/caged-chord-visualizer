@@ -86,6 +86,8 @@ export class AudioManager extends EventTarget {
     this._useWorklet = false;
     this._workletNode = null;
     this._calibrator = null;
+    this._nullFrames = 0;
+    this._silenceDebounce = params?.audio?.silenceDebounceFrames ?? DEFAULTS.audio.silenceDebounceFrames;
     this._chordDetector = new ChordDetector();
     this._onsetDetector = new OnsetDetector();
     this._ioiTracker = new IOITracker();
@@ -157,13 +159,36 @@ export class AudioManager extends EventTarget {
     }
     if (data.type !== 'analysis') return;
 
+    // Chord detection from chromagram — runs regardless of pitch
+    if (data.chromagram) {
+      const chord = this._chordDetector.update(data.chromagram);
+      if (chord) {
+        this.dispatchEvent(new CustomEvent('chord', {
+          detail: { root: chord.root, rootName: chord.rootName, typeId: chord.typeId, chordName: chord.chordName, score: chord.score, chromagram: chord.chromagram }
+        }));
+      }
+    }
+
+    // Onset detection from spectral flux — runs regardless of pitch
+    if (data.spectralFlux != null) {
+      const onset = this._onsetDetector.detect(data.spectralFlux, data.ts * 1000);
+      if (onset) {
+        this._ioiTracker.addOnset(onset.timeMs);
+        this.dispatchEvent(new CustomEvent('onset', {
+          detail: { strength: onset.strength, timeMs: onset.timeMs, spectralFlux: data.spectralFlux }
+        }));
+      }
+    }
+
     if (!data.pitch) {
-      if (this._tracker.lastNote !== null) {
+      this._nullFrames++;
+      if (this._nullFrames >= this._silenceDebounce && this._tracker.lastNote !== null) {
         this._tracker.reset();
         this.dispatchEvent(new CustomEvent('silence'));
       }
       return;
     }
+    this._nullFrames = 0;
 
     const { note, cents, hz, semi, confidence } = data.pitch;
     const result = this._tracker.update(note);
@@ -183,27 +208,6 @@ export class AudioManager extends EventTarget {
       }
 
       this.dispatchEvent(new CustomEvent('detect', { detail }));
-    }
-
-    // Chord detection from chromagram
-    if (data.chromagram) {
-      const chord = this._chordDetector.update(data.chromagram);
-      if (chord) {
-        this.dispatchEvent(new CustomEvent('chord', {
-          detail: { root: chord.root, rootName: chord.rootName, typeId: chord.typeId, chordName: chord.chordName, score: chord.score, chromagram: chord.chromagram }
-        }));
-      }
-    }
-
-    // Onset detection from spectral flux
-    if (data.spectralFlux != null) {
-      const onset = this._onsetDetector.detect(data.spectralFlux, data.ts * 1000);
-      if (onset) {
-        this._ioiTracker.addOnset(onset.timeMs);
-        this.dispatchEvent(new CustomEvent('onset', {
-          detail: { strength: onset.strength, timeMs: onset.timeMs, spectralFlux: data.spectralFlux }
-        }));
-      }
     }
   }
 
@@ -252,7 +256,8 @@ export class AudioManager extends EventTarget {
       }
 
       if (r < this._rmsThreshold) {
-        if (this._tracker.lastNote !== null) {
+        this._nullFrames++;
+        if (this._nullFrames >= this._silenceDebounce && this._tracker.lastNote !== null) {
           this._tracker.reset();
           this.dispatchEvent(new CustomEvent('silence'));
         }
@@ -261,13 +266,15 @@ export class AudioManager extends EventTarget {
       }
       let hz = yinDetect(this.buffer, this.audioCtx.sampleRate);
       if (!hz || hz < FREQ_MIN || hz > FREQ_MAX) {
-        if (this._tracker.lastNote !== null) {
+        this._nullFrames++;
+        if (this._nullFrames >= this._silenceDebounce && this._tracker.lastNote !== null) {
           this._tracker.reset();
           this.dispatchEvent(new CustomEvent('silence'));
         }
         this.rafId = requestAnimationFrame(loop);
         return;
       }
+      this._nullFrames = 0;
       // Harmonic correction for wound strings
       if (this._harmonicCorrection && hz > 160 && hz / 2 >= 50) {
         hz = harmonicCorrect(hz, this.buffer, this.audioCtx.sampleRate);
@@ -295,6 +302,7 @@ export class AudioManager extends EventTarget {
     this.analyser = null;
     this.buffer = null;
     this._tracker.reset();
+    this._nullFrames = 0;
     this._useWorklet = false;
     this._calibrator = null;
     this._chordDetector.reset();

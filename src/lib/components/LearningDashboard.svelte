@@ -1,7 +1,16 @@
 <script>
-  import { TYPES } from '$lib/learning/configs/unified.js';
+  import { TYPES, loadTypeFlags } from '$lib/learning/configs/unified.js';
 
   let { engine } = $props();
+
+  // Compute enabled/disabled state per type from defaults + localStorage overrides
+  let typeFlags = $state(loadTypeFlags());
+  function isTypeEnabled(typeId) {
+    const flag = typeFlags[typeId];
+    if (flag !== undefined) return flag;
+    const t = TYPES.find(x => x.id === typeId);
+    return t ? t.enabled : true;
+  }
   let open = $state(false);
   let mastery = $state(null);
   let sortCol = $state('pL');
@@ -37,6 +46,7 @@
   // Only poll when panel is open; cleanup stops polling when closed
   $effect(() => {
     if (!open) return;
+    typeFlags = loadTypeFlags();
     refresh();
     const interval = setInterval(refresh, 2000);
     return () => clearInterval(interval);
@@ -259,7 +269,7 @@
           <div class="ld-section-hd">Exercise Mastery</div>
           <div class="ld-type-list">
             {#each typeMasteryStats() as ts}
-              <div class="ld-type-row">
+              <div class="ld-type-row" class:ld-type-disabled={!isTypeEnabled(ts.id)}>
                 <button class="ld-type-header" onclick={() => expandedType = expandedType === ts.id ? null : ts.id}>
                   <span class="ld-type-name">{ts.name}</span>
                   <div class="ld-type-bar-wrap">
@@ -420,6 +430,7 @@
   /* Exercise Mastery — type list */
   .ld-type-list{display:flex;flex-direction:column;gap:2px}
   .ld-type-row{display:flex;flex-direction:column}
+  .ld-type-row.ld-type-disabled{opacity:.35;pointer-events:none}
   .ld-type-header{display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;color:var(--tx);font-family:inherit;font-size:10px;cursor:pointer;padding:4px 2px;border-radius:4px;transition:background .15s}
   .ld-type-header:hover{background:rgba(88,166,255,.04)}
   .ld-type-name{width:80px;text-align:right;flex-shrink:0;font-weight:600;font-size:9px;color:var(--mt);text-transform:uppercase;letter-spacing:.3px}

@@ -11,8 +11,18 @@ export function scoreCandidate(c, state) {
   const params = state.params;
   const scoring = params?.scoring ?? DEFAULTS.scoring;
   const plateau = params?.plateau ?? DEFAULTS.plateau;
+  const focusParams = params?.focus ?? DEFAULTS.focus;
 
   const difficulty = config.itemDifficulty ? config.itemDifficulty(item) : 0.5;
+
+  // Focus bonus: boost items matching current focus type/cluster
+  let focusBonus = 0;
+  if (item._type && state.focusType && item._type === state.focusType) {
+    focusBonus += focusParams.typeContinuityBonus;
+  }
+  if (state.focusCluster && rec && rec.clusters && rec.clusters.includes(state.focusCluster)) {
+    focusBonus += focusParams.clusterContinuityBonus;
+  }
 
   // 2a. Adaptive sigma/offset based on session accuracy
   const sigma = adaptiveSigma(totalAttempts, sessionWindow, params);
@@ -21,7 +31,12 @@ export function scoreCandidate(c, state) {
   if (isNew) {
     const mu = theta + offset;
     const score = Math.exp(-((difficulty - mu) ** 2) / (2 * sigma ** 2));
-    return score;
+    // For new items, check focus cluster against item clusters if available
+    let newFocusBonus = 0;
+    if (item._type && state.focusType && item._type === state.focusType) {
+      newFocusBonus += focusParams.typeContinuityBonus;
+    }
+    return score + newFocusBonus;
   }
 
   const pL = rec.pL;
@@ -103,7 +118,7 @@ export function scoreCandidate(c, state) {
   }
 
   return exploitation + exploration + reviewUrgency + confusionBoost
-    + difficultyMatch + interleave + fatigueBias + coverageBonus + stuckPenalty;
+    + difficultyMatch + interleave + fatigueBias + coverageBonus + stuckPenalty + focusBonus;
 }
 
 export function isMastered(rec, params) {

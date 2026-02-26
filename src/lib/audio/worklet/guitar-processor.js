@@ -16,7 +16,7 @@ const YIN_THRESHOLD_AGGRESSIVE = 0.10;
 
 // Multi-candidate YIN constants
 const MAX_CANDIDATES = 5;
-const SUBHARMONIC_PENALTY = 0.20;
+const SUBHARMONIC_PENALTY = 0.30;
 
 // Kalman filter defaults
 const KALMAN_Q_PITCH = 0.01;
@@ -265,30 +265,8 @@ class GuitarProcessor extends AudioWorkletProcessor {
       }
     }
 
-    if (!correctedHz) {
-      if (this._enableFeatures) this._freqTrajectory = [];
-      this.port.postMessage({ type: 'analysis', ts, rms: r, pitch: null });
-      return;
-    }
-
-    // Feature extraction
-    let features = null;
-    if (this._enableFeatures) {
-      this._freqTrajectory.push(correctedHz);
-      if (this._freqTrajectory.length > 20) this._freqTrajectory.shift();
-
-      const centsDelta = this._freqTrajectory.length >= 2
-        ? 1200 * Math.log2(this._freqTrajectory[this._freqTrajectory.length - 1] / this._freqTrajectory[this._freqTrajectory.length - 2])
-        : 0;
-
-      features = {
-        freqTrajectory: [...this._freqTrajectory],
-        centsDelta,
-        rmsDb: r > 0 ? 20 * Math.log10(r) : -Infinity
-      };
-    }
-
     // 10. Compute magnitudes (original frame, not pre-emphasized)
+    // Runs before pitch null-check so chromagram/onset work for polyphonic signals
     let magnitudes = null;
     let chromagram = null;
     let spectralFluxVal = null;
@@ -319,6 +297,29 @@ class GuitarProcessor extends AudioWorkletProcessor {
         }
         this._prevMagnitudes = magnitudes;
       }
+    }
+
+    if (!correctedHz) {
+      if (this._enableFeatures) this._freqTrajectory = [];
+      this.port.postMessage({ type: 'analysis', ts, rms: r, pitch: null, chromagram, spectralFlux: spectralFluxVal });
+      return;
+    }
+
+    // Feature extraction
+    let features = null;
+    if (this._enableFeatures) {
+      this._freqTrajectory.push(correctedHz);
+      if (this._freqTrajectory.length > 20) this._freqTrajectory.shift();
+
+      const centsDelta = this._freqTrajectory.length >= 2
+        ? 1200 * Math.log2(this._freqTrajectory[this._freqTrajectory.length - 1] / this._freqTrajectory[this._freqTrajectory.length - 2])
+        : 0;
+
+      features = {
+        freqTrajectory: [...this._freqTrajectory],
+        centsDelta,
+        rmsDb: r > 0 ? 20 * Math.log10(r) : -Infinity
+      };
     }
 
     // 14. Post message
@@ -466,7 +467,7 @@ class GuitarProcessor extends AudioWorkletProcessor {
     const candidates = [
       { freq: hz / 2, tau: tauOriginal * 2, threshold: 0.80 },   // sub-octave
       { freq: hz / 3, tau: tauOriginal * 3, threshold: 0.80 },   // 3rd harmonic
-      { freq: hz * 2, tau: Math.round(tauOriginal / 2), threshold: 0.70 }, // super-octave
+      { freq: hz * 2, tau: Math.round(tauOriginal / 2), threshold: 0.55 }, // super-octave
     ];
 
     let bestFreq = hz;

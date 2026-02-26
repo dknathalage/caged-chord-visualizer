@@ -4,7 +4,7 @@
   import { saveExercise } from '$lib/progress.js';
   import { AudioManager } from '$lib/audio/AudioManager.js';
   import { LearningEngine } from '$lib/learning/engine.js';
-  import { unifiedConfig, TYPES } from '$lib/learning/configs/unified.js';
+  import { unifiedConfig, TYPES, loadTypeFlags, saveTypeFlags } from '$lib/learning/configs/unified.js';
   import { migrateToUnified } from '$lib/learning/migration.js';
   import { addToast } from '$lib/stores/notifications.svelte.js';
   import ProgressRing from '$lib/components/svg/ProgressRing.svelte';
@@ -61,6 +61,21 @@
 
   function refreshMastery() {
     mastery = engine.getMastery();
+  }
+
+  // Type toggle flags (persisted in localStorage)
+  let typeFlags = $state(loadTypeFlags());
+
+  function isTypeEnabled(typeId) {
+    const flag = typeFlags[typeId];
+    const t = TYPES.find(t => t.id === typeId);
+    return flag !== undefined ? flag : (t?.enabled ?? true);
+  }
+
+  function toggleType(typeId) {
+    const current = isTypeEnabled(typeId);
+    typeFlags = { ...typeFlags, [typeId]: !current };
+    saveTypeFlags(typeFlags);
   }
 
   function typeMastery(m) {
@@ -139,7 +154,7 @@
     engine.report(curItem, true, performance.now() - qStartTime, extraMeta || null);
     msgText = `+${pts} points!`; msgErr = false;
     refreshSessionMastery();
-    setTimeout(() => { if (phase === 'success') nextChallenge(); }, 1200);
+    setTimeout(() => { if (phase === 'success') nextChallenge(); }, 500);
   }
 
   function onChallengeWrong() {
@@ -150,6 +165,11 @@
     msgText = pen > 0 ? '\u2212' + pen + ' points' : 'Wrong!';
     msgErr = true;
     refreshSessionMastery();
+  }
+
+  function onChallengeWrongAdvance() {
+    onChallengeWrong();
+    setTimeout(() => { if (phase === 'listening') nextChallenge(); }, 2000);
   }
 
   function onChallengeInvalid() {
@@ -221,7 +241,7 @@
     streak = 0; attempts++;
     score = Math.max(0, score - 5);
     msgText = 'Skipped'; msgErr = true;
-    setTimeout(() => nextChallenge(), 1000);
+    setTimeout(() => nextChallenge(), 400);
   }
 
   function onStop() {
@@ -281,7 +301,11 @@
       </div>
       <div class="type-bars">
         {#each typeStats as ts}
-          <div class="type-bar">
+          {@const enabled = isTypeEnabled(ts.id)}
+          <div class="type-bar" class:type-bar-disabled={!enabled}>
+            <button class="type-toggle" class:type-toggle-on={enabled} onclick={() => toggleType(ts.id)} title="{enabled ? 'Disable' : 'Enable'} {ts.name}">
+              <span class="type-toggle-knob"></span>
+            </button>
             <div class="type-bar-name">{ts.name}</div>
             <div class="type-bar-track">
               <div class="type-bar-fill" style="width:{Math.round(ts.avgPL * 100)}%"></div>
@@ -405,9 +429,9 @@
       {:else if challengeType === 'cr'}
         <ChordRecognition bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrong} onInvalid={onChallengeInvalid} {setMsg} {showDetected} />
       {:else if challengeType === 'rt'}
-        <RhythmTrainer bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrong} {setMsg} {showDetected} />
+        <RhythmTrainer bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrongAdvance} {setMsg} {showDetected} />
       {:else if challengeType === 'sp'}
-        <StrumPatternTrainer bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrong} {setMsg} {showDetected} />
+        <StrumPatternTrainer bind:this={challengeRef} {audio} onComplete={onChallengeComplete} onWrong={onChallengeWrongAdvance} {setMsg} {showDetected} />
       {/if}
 
       <PitchDisplay {detectedNote} {detectedClass} {centsLbl} {centsLeft} {hzText} />
@@ -488,6 +512,12 @@
   .type-bar-track{flex:1;height:8px;background:var(--sf2);border-radius:4px;overflow:hidden}
   .type-bar-fill{height:100%;background:var(--ac);border-radius:4px;transition:width .3s}
   .type-bar-pct{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--mt);width:36px;text-align:right}
+  .type-bar-disabled{opacity:.4}
+  .type-bar-disabled .type-bar-fill{background:var(--mt)}
+  .type-toggle{position:relative;width:28px;height:16px;border-radius:8px;border:none;background:var(--sf2);cursor:pointer;flex-shrink:0;padding:0;transition:background .2s}
+  .type-toggle-on{background:var(--ac)}
+  .type-toggle-knob{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .2s}
+  .type-toggle-on .type-toggle-knob{transform:translateX(12px)}
   .type-badge{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--mt);background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:.2rem .6rem;text-transform:uppercase;letter-spacing:.5px}
   @media(max-width:600px){
     .nt-wrap{padding:.5rem;gap:.4rem}
@@ -496,5 +526,8 @@
     .sfn-panel-value{font-size:11px}
     .nt-btn{font-size:12px;padding:.3rem .6rem}
     .type-bar-name{width:80px;font-size:10px}
+    .type-toggle{width:24px;height:14px}
+    .type-toggle-knob{width:10px;height:10px}
+    .type-toggle-on .type-toggle-knob{transform:translateX(10px)}
   }
 </style>

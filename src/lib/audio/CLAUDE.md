@@ -198,6 +198,25 @@ Log compression makes onset detection robust to volume changes (10× magnitude c
 | `'onset'` | `{strength, timeMs, spectralFlux}` | Note onset detected |
 | `'calibrated'` | `{noiseFloor, rmsThreshold}` | Noise calibration complete |
 
+## Stability & Debounce
+
+Two mechanisms prevent UI flickering during sustained note playback:
+
+### Silence Debounce — `AudioManager.js`
+
+A single null-pitch frame no longer immediately resets the tracker and dispatches `'silence'`. Instead, AudioManager counts consecutive null frames (`_nullFrames`) and only fires silence after `silenceDebounceFrames` (default 5, ~53ms at 48kHz/HOP_SIZE=512) consecutive nulls. This applies to all three silence paths:
+- Worklet message with `data.pitch = null`
+- RAF loop with RMS below threshold
+- RAF loop with invalid/out-of-range frequency
+
+Any valid pitch detection resets the counter to 0. The counter is also reset in `stop()`. The threshold is configurable via `params.audio.silenceDebounceFrames` (Tier 2 default in `defaults.js`).
+
+### Note Grace Frames — `StableNoteTracker.js`
+
+Once a note reaches stable confirmation (N consecutive identical frames), the tracker grants 2 "grace frames." If a different note appears briefly (1-2 frames) before returning to the confirmed note, the transient is ignored and the confirmed note continues to be reported as stable. This prevents brief pitch detection glitches from resetting a note that the user is still holding.
+
+State fields: `_confirmed` (last stable note), `_graceLeft` (remaining grace frames, reset to 2 on each stable confirmation).
+
 ## Known Limitations
 
 - Worklet code is duplicated from analysis modules — must be kept in sync manually

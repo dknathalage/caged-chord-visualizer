@@ -12,18 +12,43 @@ import { strumPatternConfig } from './strumPattern.js';
 import { DEFAULTS } from '../defaults.js';
 
 export const TYPES = [
-  { id: 'nf', config: noteFindConfig,            name: 'Note Find' },
+  { id: 'nf', config: noteFindConfig,            name: 'Note Find',           enabled: true },
 
-  { id: 'iv', config: intervalTrainerConfig,     name: 'Interval' },
+  { id: 'iv', config: intervalTrainerConfig,     name: 'Interval',            enabled: true },
 
-  { id: 'cp', config: chordPlayerConfig,         name: 'Chord Player' },
-  { id: 'sr', config: scaleRunnerConfig,         name: 'Scale Runner' },
-  { id: 'mt', config: modeTrainerConfig,         name: 'Mode Trainer' },
-  { id: 'cx', config: chordTransitionConfig,     name: 'Chord Transition' },
-  { id: 'cr', config: chordRecognitionConfig,    name: 'Chord Recognition' },
-  { id: 'rt', config: rhythmTrainerConfig,       name: 'Rhythm Trainer' },
-  { id: 'sp', config: strumPatternConfig,        name: 'Strum Pattern' },
+  { id: 'cp', config: chordPlayerConfig,         name: 'Chord Player',        enabled: true },
+  { id: 'sr', config: scaleRunnerConfig,         name: 'Scale Runner',        enabled: true },
+  { id: 'mt', config: modeTrainerConfig,         name: 'Mode Trainer',        enabled: true },
+  { id: 'cx', config: chordTransitionConfig,     name: 'Chord Transition',    enabled: true },
+  { id: 'cr', config: chordRecognitionConfig,    name: 'Chord Recognition',   enabled: true },
+  { id: 'rt', config: rhythmTrainerConfig,       name: 'Rhythm Trainer',      enabled: false },
+  { id: 'sp', config: strumPatternConfig,        name: 'Strum Pattern',       enabled: true },
 ];
+
+const TYPE_FLAGS_KEY = 'gl_type_flags';
+
+export function loadTypeFlags() {
+  try {
+    const raw = localStorage.getItem(TYPE_FLAGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+export function saveTypeFlags(flags) {
+  localStorage.setItem(TYPE_FLAGS_KEY, JSON.stringify(flags));
+}
+
+export function getEnabledTypes() {
+  const overrides = loadTypeFlags();
+  return TYPES.filter(t => {
+    const flag = overrides[t.id];
+    return flag !== undefined ? flag : t.enabled;
+  });
+}
+
+export function getEnabledTypeIds() {
+    return new Set(getEnabledTypes().map(t => t.id));
+}
 
 // Global difficulty ranges per type — overlapping for smooth transitions
 const TYPE_DIFFICULTY = {
@@ -50,8 +75,14 @@ function computeTypeWeights(engine) {
   const window = u.thetaWindow;
   const lo = theta - window;
   const hi = theta + window;
+  const enabled = getEnabledTypes();
+  const enabledIds = new Set(enabled.map(t => t.id));
 
   for (const t of TYPES) {
+    if (!enabledIds.has(t.id)) {
+      weights[t.id] = 0;
+      continue;
+    }
     const td = TYPE_DIFFICULTY[t.id];
     const typeHi = td.base + td.span;
 
@@ -83,7 +114,10 @@ function computeTypeWeights(engine) {
 
 function weightedPick(weights) {
   const entries = Object.entries(weights).filter(([, w]) => w > 0);
-  if (entries.length === 0) return TYPES[0].id;
+  if (entries.length === 0) {
+    const enabled = getEnabledTypes();
+    return enabled.length > 0 ? enabled[0].id : TYPES[0].id;
+  }
   const total = entries.reduce((s, [, w]) => s + w, 0);
   let r = Math.random() * total;
   for (const [id, w] of entries) {
@@ -101,6 +135,8 @@ function typeById(id) {
 
 export const unifiedConfig = {
   _isUnified: true,
+
+  getEnabledTypeIds,
 
   itemDifficulty(item) {
     const t = typeById(item._type);
@@ -142,7 +178,8 @@ export const unifiedConfig = {
 
   getTypeIds(engine) {
     const theta = engine?.theta ?? 0.05;
-    return TYPES
+    const enabled = getEnabledTypes();
+    return enabled
       .filter(t => theta >= TYPE_DIFFICULTY[t.id].base - 0.15)
       .sort((a, b) => TYPE_DIFFICULTY[a.id].base - TYPE_DIFFICULTY[b.id].base)
       .map(t => t.id);
@@ -152,7 +189,19 @@ export const unifiedConfig = {
     const t = typeById(typeId);
     if (!t) return this.genRandom(lastItem, engine);
     const innerLast = (lastItem && lastItem._type === typeId) ? lastItem._inner : null;
-    const innerItem = t.config.genRandom(innerLast);
+    const td = TYPE_DIFFICULTY[typeId];
+    const theta = engine?.theta ?? 0.05;
+    const span = 2.0;
+    const progress = Math.max(0, Math.min(1, (theta - td.base) / span));
+    const maxDiff = td.base + progress * span;
+
+    let innerItem;
+    for (let i = 0; i < 5; i++) {
+      innerItem = t.config.genRandom(innerLast);
+      const d = td.base + t.config.itemDifficulty(innerItem) * td.span;
+      if (d <= maxDiff) break;
+    }
+
     const item = { _type: typeId, _inner: innerItem };
     return this._maybeRecall(item, engine);
   },
@@ -189,7 +238,9 @@ export const unifiedConfig = {
       }
     }
 
+    const enabledIds = getEnabledTypeIds();
     for (const t of TYPES) {
+      if (!enabledIds.has(t.id)) continue;
       try {
         const innerLast = (lastItem && lastItem._type === t.id) ? lastItem._inner : null;
         const innerItem = t.config.genFromCluster(clusterId, innerLast);
