@@ -4,21 +4,27 @@ SvelteKit SPA with static adapter for GitHub Pages deployment.
 
 ```
 src/lib/
-  constants/music.js          # NOTES, A4, TUNINGS, INTERVALS, CHORD_TYPES
-  audio/                      # Audio analysis pipeline — see audio/CLAUDE.md
-  music/                      # Fretboard math, CAGED chord resolution, SVG rendering
-  learning/                   # Adaptive engine — see learning/CLAUDE.md
-  components/challenges/      # Hold detection state machine for mic exercises
+  constants/    # Music theory data — notes, tunings, intervals, chords, scales, modes
+  audio/        # Audio analysis pipeline — YIN, Kalman, CQT, chord/onset detection
+  music/        # Fretboard math, CAGED chord resolution, SVG rendering
+  learning/     # Adaptive engine — BKT, FSRS, theta, drills, persistence
+  components/   # Svelte 5 UI — challenge views, SVG widgets, dashboard
+  stores/       # Svelte rune stores (notifications)
+  progress.js   # localStorage exercise progress tracking
+  skilltree.js  # 5-chapter curriculum definition with dependencies
 src/routes/
+  practice/     # Main adaptive practice interface
   caged/        # CAGED Chord Visualizer
-  tuner/        # Guitar Tuner
-  exercises/    # Mic-based: note-find, string-traversal, interval
-  theory/       # Tap-based: fretboard-quiz, interval-namer, chord-speller
+  tuner/        # Chromatic Guitar Tuner
 ```
 
 Detailed documentation lives in feature-folder `CLAUDE.md` files:
 - `src/lib/audio/CLAUDE.md` — pitch detection, chord recognition, onset detection, worklet architecture
 - `src/lib/learning/CLAUDE.md` — knowledge models, item selection, drill systems, persistence
+- `src/lib/constants/CLAUDE.md` — music theory constants, tunings, intervals, chord types
+- `src/lib/music/CLAUDE.md` — fretboard geometry, CAGED resolution, SVG rendering
+- `src/lib/components/CLAUDE.md` — challenge components, SVG widgets, dashboard
+- `src/routes/CLAUDE.md` — page routes, shared patterns, state management
 
 ### Code Conventions
 
