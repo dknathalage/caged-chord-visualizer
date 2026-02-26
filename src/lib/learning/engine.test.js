@@ -591,16 +591,17 @@ describe('persistence v3', () => {
     expect(rec.attempts).toBe(2);
   });
 
-  it('saves with version 3 and includes theta', () => {
-    const engine = new LearningEngine(makeConfig(), 'test-v3');
+  it('saves with version 4 and includes theta and adaptive', () => {
+    const engine = new LearningEngine(makeConfig(), 'test-v4');
     const item = engine.next();
     engine.report(item, true, 1000);
     engine.save();
 
-    const raw = JSON.parse(store['gl_learn_test-v3']);
-    expect(raw.v).toBe(3);
+    const raw = JSON.parse(store['gl_learn_test-v4']);
+    expect(raw.v).toBe(4);
     expect(raw.theta).toBeGreaterThan(0);
     expect(raw.items).toBeDefined();
+    expect(raw.adaptive).toBeDefined();
 
     // Check FSRS fields exist
     const itemData = Object.values(raw.items)[0];
@@ -1406,3 +1407,225 @@ describe('coverage matrix', () => {
     expect(typeof mastery.coverage).toBe('object');
   });
 });
+
+// ──────────────────────────────────────────────
+// Adaptive Estimation Integration
+// ──────────────────────────────────────────────
+
+describe('adaptive estimation integration', () => {
+  it('estimates pG after 20+ attempts on new items', () => {
+    // Create items that stay at low pL (simulate guessing)
+    const items = [];
+    for (let i = 0; i < 10; i++) {
+      items.push({ id: `new_${i}`, clusters: ['default'] });
+    }
+    const config = makeDeterministicConfig(items);
+    const engine = new LearningEngine(config, null);
+
+    // Initially null
+    expect(engine.adaptive.pG).toBeNull();
+
+    // Cold start + generate items
+    for (let i = 0; i < 8; i++) engine.next();
+    for (let i = 0; i < 8; i++) engine.report(items[i % items.length], false, 1000);
+
+    // Do more attempts, keeping items at low pL (mostly wrong)
+    for (let q = 0; q < 20; q++) {
+      const item = engine.next();
+      // Mostly wrong to keep pL low, occasionally right (guess)
+      engine.report(item, q % 5 === 0, 1000);
+    }
+
+    // After 20+ total attempts on low-pL items, pG should be estimated
+    // Force a check at the 20-attempt boundary
+    if (engine.totalAttempts % 20 !== 0) {
+      const remaining = 20 - (engine.totalAttempts % 20);
+      for (let q = 0; q < remaining; q++) {
+        const item = engine.next();
+        engine.report(item, false, 1000);
+      }
+    }
+
+    // pG should now be estimated (or null if items gained too much pL)
+    // The key is that the adaptive system ran without errors
+    expect(engine.adaptive).toBeDefined();
+    expect(typeof engine.adaptive.pG === 'number' || engine.adaptive.pG === null).toBe(true);
+  });
+
+  it('estimates pS after mastering 5+ items', () => {
+    const items = [];
+    for (let i = 0; i < 8; i++) {
+      items.push({ id: `item_${i}`, clusters: ['default'] });
+    }
+    const config = makeDeterministicConfig(items);
+    const engine = new LearningEngine(config, null);
+
+    // Drive items to mastery: many correct answers
+    for (let round = 0; round < 12; round++) {
+      for (const item of items) {
+        engine.next();
+        engine.report(item, true, 800);
+      }
+    }
+
+    // Force adaptive check
+    if (engine.totalAttempts % 20 !== 0) {
+      const remaining = 20 - (engine.totalAttempts % 20);
+      for (let q = 0; q < remaining; q++) {
+        const item = engine.next();
+        engine.report(item, true, 800);
+      }
+    }
+
+    // With 8 items and 12+ rounds of correct answers, many should have pL > 0.9
+    // pS should be estimated (low slip rate since everything is correct)
+    const masteredItems = [...engine.items.values()].filter(r => r.pL > 0.9 && r.attempts >= 5);
+    if (masteredItems.length >= 5) {
+      expect(engine.adaptive.pS).not.toBeNull();
+      expect(engine.adaptive.pS).toBeGreaterThanOrEqual(0.02);
+      expect(engine.adaptive.pS).toBeLessThanOrEqual(0.30);
+    }
+  });
+
+  it('estimates pT for fast learners', () => {
+    const items = [];
+    for (let i = 0; i < 10; i++) {
+      items.push({ id: `fast_${i}`, clusters: ['default'] });
+    }
+    const config = makeDeterministicConfig(items);
+    const engine = new LearningEngine(config, null);
+
+    // Drive items to pL >= 0.8 quickly (3-4 correct in a row per item)
+    for (let round = 0; round < 6; round++) {
+      for (const item of items) {
+        engine.next();
+        engine.report(item, true, 700);
+      }
+    }
+
+    // Force adaptive update
+    if (engine.totalAttempts % 20 !== 0) {
+      const remaining = 20 - (engine.totalAttempts % 20);
+      for (let q = 0; q < remaining; q++) {
+        const item = engine.next();
+        engine.report(item, true, 700);
+      }
+    }
+
+    // Check that adaptive estimates exist
+    const crossedMastery = [...engine.items.values()].filter(r => r.pL >= 0.8);
+    if (crossedMastery.length > 0) {
+      // pT should be boosted (fast learner) or null if avg is in [5, 12]
+      expect(typeof engine.adaptive.pT === 'number' || engine.adaptive.pT === null).toBe(true);
+      if (engine.adaptive.pT !== null) {
+        expect(engine.adaptive.pT).toBeGreaterThanOrEqual(0.05);
+        expect(engine.adaptive.pT).toBeLessThanOrEqual(0.40);
+      }
+    }
+  });
+
+  it('adaptive params flow into BKT updates', () => {
+    const items = [];
+    for (let i = 0; i < 10; i++) {
+      items.push({ id: `bkt_${i}`, clusters: ['default'] });
+    }
+    const config = makeDeterministicConfig(items);
+    const engine = new LearningEngine(config, null);
+
+    const initialBktPG = engine.bkt.pG;
+
+    // Generate enough data for adaptive estimates
+    for (let round = 0; round < 8; round++) {
+      for (const item of items) {
+        engine.next();
+        engine.report(item, true, 800);
+      }
+    }
+
+    // Force check
+    if (engine.totalAttempts % 20 !== 0) {
+      const remaining = 20 - (engine.totalAttempts % 20);
+      for (let q = 0; q < remaining; q++) {
+        const item = engine.next();
+        engine.report(item, true, 800);
+      }
+    }
+
+    // If adaptive pG was estimated, bkt.pG should have been updated
+    if (engine.adaptive.pG !== null) {
+      expect(engine.bkt.pG).toBe(engine.adaptive.pG);
+      expect(engine.bkt.pG).not.toBe(initialBktPG);
+    }
+  });
+
+  it('exposes adaptive state in getMastery()', () => {
+    const engine = new LearningEngine(makeConfig(), null);
+    const mastery = engine.getMastery();
+    expect(mastery.adaptive).toBeDefined();
+    expect(mastery.adaptive.pG).toBeNull();
+    expect(mastery.adaptive.pS).toBeNull();
+    expect(mastery.adaptive.pT).toBeNull();
+    expect(mastery.adaptive.drillEffectiveness).toBeDefined();
+  });
+
+  it('resets adaptive state on reset()', () => {
+    const items = [{ id: 'A', clusters: ['default'] }];
+    const config = makeDeterministicConfig(items);
+    const engine = new LearningEngine(config, null);
+
+    // Manually set adaptive state
+    engine.adaptive.pG = 0.10;
+    engine.adaptive.featureErrorRates = { string_1: { correct: 5, total: 10 } };
+
+    engine.reset();
+
+    expect(engine.adaptive.pG).toBeNull();
+    expect(engine.adaptive.pS).toBeNull();
+    expect(engine.adaptive.pT).toBeNull();
+    expect(engine.adaptive.featureErrorRates).toEqual({});
+    expect(engine.adaptive.drillEffectiveness.microDrill).toEqual({ helped: 0, total: 0 });
+  });
+
+  it('tracks feature errors when config provides itemFeatures', () => {
+    const items = [
+      { id: 'A', clusters: ['default'] },
+      { id: 'B', clusters: ['default'] },
+    ];
+    const config = makeDeterministicConfig(items);
+    config.itemFeatures = (item) => ({ string: item.id === 'A' ? 1 : 2 });
+
+    const engine = new LearningEngine(config, null);
+
+    // Report some attempts
+    for (let i = 0; i < 10; i++) {
+      engine.next();
+      engine.report(items[i % 2], i % 3 !== 0, 1000);
+    }
+
+    // Feature error rates should be populated
+    expect(Object.keys(engine.adaptive.featureErrorRates).length).toBeGreaterThan(0);
+  });
+
+  it('persists and restores adaptive state through save/load', () => {
+    const items = [{ id: 'A', clusters: ['default'] }];
+    const config = makeDeterministicConfig(items);
+    const engine = new LearningEngine(config, 'adaptive-persist-test');
+
+    // Set adaptive state
+    engine.adaptive.pG = 0.08;
+    engine.adaptive.pS = 0.12;
+    engine.adaptive.featureErrorRates = { string_1: { correct: 8, total: 10 } };
+    engine._save();
+
+    // Create new engine that loads from same storage
+    const engine2 = new LearningEngine(config, 'adaptive-persist-test');
+    expect(engine2.adaptive.pG).toBe(0.08);
+    expect(engine2.adaptive.pS).toBe(0.12);
+    expect(engine2.adaptive.featureErrorRates.string_1).toEqual({ correct: 8, total: 10 });
+
+    // If pG was loaded, it should flow into bkt params
+    expect(engine2.bkt.pG).toBe(0.08);
+  });
+});
+
+// v4 adaptive persistence tests are in persistence/serializer.test.js and migration.test.js

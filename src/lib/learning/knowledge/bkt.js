@@ -1,7 +1,8 @@
 import { clamp } from '../math-utils.js';
 import { fsrsRetrievability } from '../scheduling/fsrs.js';
+import { CONSTANTS } from '../constants.js';
 
-const MS_PER_DAY = 86400000;
+const MS_PER_DAY = CONSTANTS.fsrs.MS_PER_DAY;
 
 export function updateBKT(rec, ok, timeMs, medianTime, bkt) {
   const { pG, pS, pT } = bkt;

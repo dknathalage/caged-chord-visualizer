@@ -10,32 +10,50 @@ import { getCoverageMatrix, getCoverageCell } from './tracking/coverage.js';
 import { topConfusion, getConfusions as getConfusionsFor } from './tracking/confusion.js';
 import { LocalStorageAdapter } from './persistence/storage.js';
 import { serialize, deserialize, migrateV1 } from './persistence/serializer.js';
+import { resolveParams } from './params.js';
+import { estimatePG, estimatePS, estimatePT } from './adaptive/estimators.js';
+import { createDrillTracker } from './adaptive/drill-tracker.js';
+import { updateFeatureErrors, getFeatureDifficulty } from './adaptive/difficulty.js';
 
-let COLD_START = 7;
-const MAX_TIMES = 10;
-const MAX_HIST = 5;
-const MAX_CORRECT_TIMES = 200;
-const MAX_CONFUSIONS = 10;
-const SESSION_WINDOW = 20;
-const MS_PER_DAY = 86400000;
-
-// BKT defaults
-const BKT_AUDIO = { pG: 0.05, pS: 0.15, pT: 0.20 };
+const DEFAULT_ADAPTIVE = {
+  pG: null, pS: null, pT: null,
+  drillEffectiveness: {
+    microDrill: { helped: 0, total: 0 },
+    confusionDrill: { helped: 0, total: 0 },
+  },
+  featureErrorRates: {},
+};
 
 export class LearningEngine {
-  constructor(config, exerciseId, storage = new LocalStorageAdapter()) {
+  constructor(config, exerciseId, storage = new LocalStorageAdapter(), paramOverrides) {
     this.config = config;
     this.exerciseId = exerciseId;
     this.storage = storage;
+
+    // Resolve params: paramOverrides > config.bktParams (legacy) > DEFAULTS
+    const overrides = paramOverrides || (config.bktParams ? { bkt: config.bktParams } : {});
+    this._paramOverrides = overrides;
+    const { params, constants } = resolveParams(overrides);
+    this.params = params;
+    this.constants = constants;
+
     this.items = new Map();
     this.clusters = new Map();
     this.questionNumber = 0;
-    this.theta = 0.05;
+    this.theta = this.params.theta?.initial ?? 0.05;
     this.totalAttempts = 0;
     this.allCorrectTimes = [];
     this.recentKeys = [];
     this.lastItem = null;
-    this.bkt = config.bktParams || BKT_AUDIO;
+    this.bkt = this.params.bkt;
+
+    // Adaptive state (persisted)
+    this.adaptive = { ...DEFAULT_ADAPTIVE, drillEffectiveness: { ...DEFAULT_ADAPTIVE.drillEffectiveness, microDrill: { ...DEFAULT_ADAPTIVE.drillEffectiveness.microDrill }, confusionDrill: { ...DEFAULT_ADAPTIVE.drillEffectiveness.confusionDrill } }, featureErrorRates: {} };
+
+    // Drill effectiveness tracker (transient — rebuilt from adaptive state on load)
+    this._drillTracker = createDrillTracker();
+    this._drillTracker.state.microDrill = this.adaptive.drillEffectiveness.microDrill;
+    this._drillTracker.state.confusionDrill = this.adaptive.drillEffectiveness.confusionDrill;
 
     // Session fatigue tracking
     this.sessionWindow = [];
@@ -61,7 +79,7 @@ export class LearningEngine {
     // Cold start: round-robin types sorted by difficulty, then random
     const typeIds = this.config.getTypeIds ? this.config.getTypeIds(this) : [];
     const typeCount = typeIds.length;
-    const dynamicColdStart = Math.max(COLD_START, typeCount);
+    const dynamicColdStart = Math.max(this.params.coldStart.minQuestions, typeCount);
     if (this.questionNumber <= dynamicColdStart) {
       let item;
       if (typeCount > 0 && this.questionNumber <= typeCount) {
@@ -81,7 +99,7 @@ export class LearningEngine {
 
     // 1c. Overdue queue (FSRS due-date session planning)
     if (this.overdueQueue === null) {
-      this.overdueQueue = buildOverdueQueue(this.items, this.config);
+      this.overdueQueue = buildOverdueQueue(this.items, this.config, this.params);
     }
     if (this.overdueQueue.length > 0) {
       const item = this.overdueQueue.shift();
@@ -99,9 +117,13 @@ export class LearningEngine {
       this.lastItem = item;
       return item;
     }
-    if (shouldMicroDrill(this.lastItem, this.items, this.config, this.questionNumber)) {
+    if (shouldMicroDrill(this.lastItem, this.items, this.config, this.questionNumber, this.params)) {
       const drills = this.config.microDrill ? this.config.microDrill(this.lastItem) : null;
       if (drills && drills.length > 0) {
+        // Track drill firing for effectiveness measurement
+        const lastKey = this.config.itemKey(this.lastItem);
+        const lastRec = this.items.get(lastKey);
+        this._drillTracker.markDrillFired(lastKey, 'microDrill', lastRec ? lastRec.hist.slice() : []);
         this.microDrillQueue = drills.slice(1);
         const item = drills[0];
         this._ensureItem(item);
@@ -121,9 +143,14 @@ export class LearningEngine {
     }
     this.confusionDrillQueue = buildConfusionDrill(
       this.lastItem, this.items, this.config, this.questionNumber,
-      (confusedValue, originalItem) => this._itemForConfusedValue(confusedValue, originalItem)
+      (confusedValue, originalItem) => this._itemForConfusedValue(confusedValue, originalItem),
+      this.params
     );
     if (this.confusionDrillQueue.length > 0) {
+      // Track drill firing for effectiveness measurement
+      const lastKey = this.config.itemKey(this.lastItem);
+      const lastRec = this.items.get(lastKey);
+      this._drillTracker.markDrillFired(lastKey, 'confusionDrill', lastRec ? lastRec.hist.slice() : []);
       const item = this.confusionDrillQueue.shift();
       this._ensureItem(item);
       this._trackRecent(item);
@@ -186,7 +213,7 @@ export class LearningEngine {
 
     // Update history
     rec.hist.push(ok);
-    if (rec.hist.length > MAX_HIST) rec.hist.shift();
+    if (rec.hist.length > this.constants.history.MAX_HIST) rec.hist.shift();
 
     // Streak
     if (ok) {
@@ -198,12 +225,12 @@ export class LearningEngine {
     // Response time tracking
     if (timeMs != null && timeMs > 0) {
       rec.times.push(timeMs);
-      if (rec.times.length > MAX_TIMES) rec.times.shift();
+      if (rec.times.length > this.constants.history.MAX_TIMES) rec.times.shift();
       rec.avgTime = rec.times.reduce((s, t) => s + t, 0) / rec.times.length;
 
       if (ok) {
         this.allCorrectTimes.push(timeMs);
-        if (this.allCorrectTimes.length > MAX_CORRECT_TIMES) {
+        if (this.allCorrectTimes.length > this.constants.history.MAX_CORRECT_TIMES) {
           this.allCorrectTimes.shift();
         }
       }
@@ -215,7 +242,7 @@ export class LearningEngine {
     // Confusion tracking
     if (!ok && meta.detected) {
       rec.confusions.push({ detected: meta.detected, ts: Date.now() });
-      if (rec.confusions.length > MAX_CONFUSIONS) rec.confusions.shift();
+      if (rec.confusions.length > this.constants.history.MAX_CONFUSIONS) rec.confusions.shift();
     }
 
     // FSRS grade
@@ -240,8 +267,8 @@ export class LearningEngine {
 
     // Update theta
     const itemDifficulty = this.config.itemDifficulty ? this.config.itemDifficulty(item) : 0.5;
-    const lr = meta.skipped ? 0.12 : 0.04;
-    this.theta = updateTheta(this.theta, itemDifficulty, ok, lr);
+    const lr = meta.skipped ? this.params.theta.skipLr : this.params.theta.lr;
+    this.theta = updateTheta(this.theta, itemDifficulty, ok, lr, this.params);
 
     // Theta snapshot for plateau detection
     if (this.totalAttempts % 20 === 0) {
@@ -252,10 +279,26 @@ export class LearningEngine {
 
     // Session fatigue tracking
     this.sessionWindow.push({ ok, timeMs: timeMs || 0, questionNumber: this.questionNumber });
-    if (this.sessionWindow.length > SESSION_WINDOW) this.sessionWindow.shift();
-    const fatigueResult = checkFatigue(this.sessionWindow, this.fatigued, this.preFatigueAccuracy);
+    if (this.sessionWindow.length > this.constants.history.SESSION_WINDOW) this.sessionWindow.shift();
+    const fatigueResult = checkFatigue(this.sessionWindow, this.fatigued, this.preFatigueAccuracy, this.params);
     this.fatigued = fatigueResult.fatigued;
     this.preFatigueAccuracy = fatigueResult.preFatigueAccuracy;
+
+    // Adaptive: drill tracker — check improvement on pending drills
+    this._drillTracker.checkImprovement(this.config.itemKey(item), ok);
+
+    // Adaptive: feature difficulty tracking
+    if (this.config.itemFeatures) {
+      const features = this.config.itemFeatures(item);
+      if (features) {
+        updateFeatureErrors(this.adaptive.featureErrorRates, item, ok, features);
+      }
+    }
+
+    // Adaptive: re-estimate BKT params every 20 attempts
+    if (this.totalAttempts % 20 === 0 && this.totalAttempts > 0) {
+      this._updateAdaptiveEstimates();
+    }
 
     // Auto-save
     if (this.exerciseId) this._save();
@@ -266,7 +309,7 @@ export class LearningEngine {
     const itemList = [];
 
     for (const [key, rec] of this.items) {
-      const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / MS_PER_DAY : 0;
+      const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / this.constants.fsrs.MS_PER_DAY : 0;
       const R = rec.S > 0 && rec.lastReviewTs > 0 ? fsrsRetrievability(elapsed, rec.S) : 0;
       const tc = topConfusion(rec);
       const tt = targetTime(rec, this.allCorrectTimes);
@@ -320,6 +363,12 @@ export class LearningEngine {
       clusters: clusterList,
       fatigued: this.fatigued,
       coverage: getCoverageMatrix(this.items),
+      adaptive: {
+        pG: this.adaptive.pG,
+        pS: this.adaptive.pS,
+        pT: this.adaptive.pT,
+        drillEffectiveness: this.adaptive.drillEffectiveness,
+      },
       overall: {
         avgPL,
         totalItems,
@@ -338,7 +387,7 @@ export class LearningEngine {
     const rec = this.items.get(itemKey);
     if (!rec) return null;
     const now = Date.now();
-    const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / MS_PER_DAY : 0;
+    const elapsed = rec.lastReviewTs > 0 ? (now - rec.lastReviewTs) / this.constants.fsrs.MS_PER_DAY : 0;
     const R = rec.S > 0 && rec.lastReviewTs > 0 ? fsrsRetrievability(elapsed, rec.S) : 0;
     const tt = targetTime(rec, this.allCorrectTimes);
     const fluencyRatio = tt > 0 && rec.avgTime > 0 ? rec.avgTime / tt : 0;
@@ -376,6 +425,10 @@ export class LearningEngine {
     this.coldStartTypes = null;
     this.thetaHistory = [];
     this.plateauDetected = false;
+    this.adaptive = { ...DEFAULT_ADAPTIVE, drillEffectiveness: { ...DEFAULT_ADAPTIVE.drillEffectiveness, microDrill: { ...DEFAULT_ADAPTIVE.drillEffectiveness.microDrill }, confusionDrill: { ...DEFAULT_ADAPTIVE.drillEffectiveness.confusionDrill } }, featureErrorRates: {} };
+    this._drillTracker = createDrillTracker();
+    this._drillTracker.state.microDrill = this.adaptive.drillEffectiveness.microDrill;
+    this._drillTracker.state.confusionDrill = this.adaptive.drillEffectiveness.confusionDrill;
   }
 
   save() {
@@ -399,6 +452,7 @@ export class LearningEngine {
       fatigued: this.fatigued,
       plateauDetected: this.plateauDetected,
       allCorrectTimes: this.allCorrectTimes,
+      params: this.params,
     };
   }
 
@@ -408,7 +462,7 @@ export class LearningEngine {
   }
 
   _isMastered(rec) {
-    return isMastered(rec);
+    return isMastered(rec, this.params);
   }
 
   _topConfusion(rec) {
@@ -420,11 +474,11 @@ export class LearningEngine {
   }
 
   _adaptiveSigma() {
-    return adaptiveSigma(this.totalAttempts, this.sessionWindow);
+    return adaptiveSigma(this.totalAttempts, this.sessionWindow, this.params);
   }
 
   _adaptiveOffset() {
-    return adaptiveOffset(this.totalAttempts, this.sessionWindow);
+    return adaptiveOffset(this.totalAttempts, this.sessionWindow, this.params);
   }
 
   _checkPlateau() {
@@ -432,13 +486,13 @@ export class LearningEngine {
   }
 
   _checkFatigue() {
-    const result = checkFatigue(this.sessionWindow, this.fatigued, this.preFatigueAccuracy);
+    const result = checkFatigue(this.sessionWindow, this.fatigued, this.preFatigueAccuracy, this.params);
     this.fatigued = result.fatigued;
     this.preFatigueAccuracy = result.preFatigueAccuracy;
   }
 
   _ensureItem(item) {
-    return ensureItem(this.items, this.clusters, this.config, item);
+    return ensureItem(this.items, this.clusters, this.config, item, this.params);
   }
 
   _ensureCluster(id) {
@@ -458,18 +512,60 @@ export class LearningEngine {
   }
 
   _shouldMicroDrill() {
-    return shouldMicroDrill(this.lastItem, this.items, this.config, this.questionNumber);
+    return shouldMicroDrill(this.lastItem, this.items, this.config, this.questionNumber, this.params);
   }
 
   _buildOverdueQueue() {
-    this.overdueQueue = buildOverdueQueue(this.items, this.config);
+    this.overdueQueue = buildOverdueQueue(this.items, this.config, this.params);
   }
 
   _buildConfusionDrill() {
     this.confusionDrillQueue = buildConfusionDrill(
       this.lastItem, this.items, this.config, this.questionNumber,
-      (confusedValue, originalItem) => this._itemForConfusedValue(confusedValue, originalItem)
+      (confusedValue, originalItem) => this._itemForConfusedValue(confusedValue, originalItem),
+      this.params
     );
+  }
+
+  _updateAdaptiveEstimates() {
+    const defaultBkt = this.params.bkt;
+    let changed = false;
+
+    const newPG = estimatePG(this.items);
+    if (newPG !== null && newPG !== this.adaptive.pG) {
+      this.adaptive.pG = newPG;
+      changed = true;
+    }
+
+    const newPS = estimatePS(this.items);
+    if (newPS !== null && newPS !== this.adaptive.pS) {
+      this.adaptive.pS = newPS;
+      changed = true;
+    }
+
+    const newPT = estimatePT(this.items, defaultBkt.pT);
+    if (newPT !== null && newPT !== this.adaptive.pT) {
+      this.adaptive.pT = newPT;
+      changed = true;
+    }
+
+    // Sync drill tracker state back into adaptive
+    this.adaptive.drillEffectiveness = this._drillTracker.state;
+
+    // Re-resolve params with adaptive overrides
+    if (changed) {
+      const adaptiveOverrides = {};
+      if (this.adaptive.pG !== null || this.adaptive.pS !== null || this.adaptive.pT !== null) {
+        adaptiveOverrides.bkt = {};
+        if (this.adaptive.pG !== null) adaptiveOverrides.bkt.pG = this.adaptive.pG;
+        if (this.adaptive.pS !== null) adaptiveOverrides.bkt.pS = this.adaptive.pS;
+        if (this.adaptive.pT !== null) adaptiveOverrides.bkt.pT = this.adaptive.pT;
+      }
+      const overrides = this._paramOverrides || {};
+      const { params } = resolveParams(overrides, adaptiveOverrides);
+      this.params = params;
+      this.bkt = this.params.bkt;
+    }
   }
 
   _itemForConfusedValue(confusedValue, originalItem) {
@@ -481,13 +577,24 @@ export class LearningEngine {
     return null;
   }
 
-  _updateTheta(difficulty, ok, lr = 0.04) {
-    this.theta = updateTheta(this.theta, difficulty, ok, lr);
+  _updateTheta(difficulty, ok, lr) {
+    this.theta = updateTheta(this.theta, difficulty, ok, lr ?? this.params.theta.lr, this.params);
   }
 
   _save() {
     try {
-      this.storage.setItem(this.exerciseId, serialize(this));
+      const state = {
+        items: this.items,
+        clusters: this.clusters,
+        questionNumber: this.questionNumber,
+        totalAttempts: this.totalAttempts,
+        allCorrectTimes: this.allCorrectTimes,
+        recentKeys: this.recentKeys,
+        theta: this.theta,
+        thetaHistory: this.thetaHistory,
+        adaptive: this.adaptive,
+      };
+      this.storage.setItem(this.exerciseId, serialize(state));
     } catch (e) {
       // storage may be full or unavailable
     }
@@ -525,5 +632,27 @@ export class LearningEngine {
     this.thetaHistory = state.thetaHistory;
     this.items = state.items;
     this.clusters = state.clusters;
+    if (state.adaptive) {
+      this.adaptive = state.adaptive;
+      // Rebuild drill tracker from persisted state
+      this._drillTracker = createDrillTracker();
+      if (this.adaptive.drillEffectiveness) {
+        this._drillTracker.state.microDrill = this.adaptive.drillEffectiveness.microDrill;
+        this._drillTracker.state.confusionDrill = this.adaptive.drillEffectiveness.confusionDrill;
+      }
+      // Re-resolve params with loaded adaptive estimates
+      const adaptiveOverrides = {};
+      if (this.adaptive.pG !== null || this.adaptive.pS !== null || this.adaptive.pT !== null) {
+        adaptiveOverrides.bkt = {};
+        if (this.adaptive.pG !== null) adaptiveOverrides.bkt.pG = this.adaptive.pG;
+        if (this.adaptive.pS !== null) adaptiveOverrides.bkt.pS = this.adaptive.pS;
+        if (this.adaptive.pT !== null) adaptiveOverrides.bkt.pT = this.adaptive.pT;
+      }
+      if (Object.keys(adaptiveOverrides).length > 0) {
+        const { params } = resolveParams(this._paramOverrides || {}, adaptiveOverrides);
+        this.params = params;
+        this.bkt = this.params.bkt;
+      }
+    }
   }
 }

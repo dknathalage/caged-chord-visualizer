@@ -1,11 +1,14 @@
-const SESSION_WINDOW = 20;
+import { DEFAULTS } from '../defaults.js';
 
-export function checkFatigue(sessionWindow, fatigued, preFatigueAccuracy) {
-  if (sessionWindow.length < SESSION_WINDOW) {
+export function checkFatigue(sessionWindow, fatigued, preFatigueAccuracy, params) {
+  const f = params?.fatigue ?? DEFAULTS.fatigue;
+  const windowSize = f.sessionWindow;
+
+  if (sessionWindow.length < windowSize) {
     return { fatigued, preFatigueAccuracy };
   }
 
-  const half = SESSION_WINDOW / 2;
+  const half = windowSize / 2;
   const older = sessionWindow.slice(0, half);
   const newer = sessionWindow.slice(half);
 
@@ -21,11 +24,11 @@ export function checkFatigue(sessionWindow, fatigued, preFatigueAccuracy) {
     const accDrop = accOlder > 0 ? (accOlder - accNewer) / accOlder : 0;
     const timeIncrease = avgTimeOlder > 0 ? (avgTimeNewer - avgTimeOlder) / avgTimeOlder : 0;
 
-    if (accDrop > 0.20 || timeIncrease > 0.40) {
+    if (accDrop > f.accDropThreshold || timeIncrease > f.rtIncreaseThreshold) {
       return { fatigued: true, preFatigueAccuracy: accOlder };
     }
   } else {
-    if (preFatigueAccuracy != null && accNewer >= preFatigueAccuracy * 0.90) {
+    if (preFatigueAccuracy != null && accNewer >= preFatigueAccuracy * f.recoveryThreshold) {
       return { fatigued: false, preFatigueAccuracy: null };
     }
   }

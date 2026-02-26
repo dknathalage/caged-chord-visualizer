@@ -1,7 +1,11 @@
-export function ensureItem(items, clusters, config, item) {
+import { DEFAULTS } from './defaults.js';
+import { CONSTANTS } from './constants.js';
+
+export function ensureItem(items, clusters, config, item, params) {
   const key = config.itemKey(item);
   if (!items.has(key)) {
     const itemClusters = config.itemClusters(item);
+    const transfer = params?.transfer ?? DEFAULTS.transfer;
 
     // 3a. Knowledge transfer: check global clusters for existing stats
     let initialPL = 0.0;
@@ -10,14 +14,14 @@ export function ensureItem(items, clusters, config, item) {
       let totalAcc = 0, count = 0;
       for (const gcid of globalCls) {
         const cl = clusters.get(gcid);
-        if (cl && cl.total >= 3) {
+        if (cl && cl.total >= transfer.clusterMinAttempts) {
           totalAcc += cl.correct / cl.total;
           count++;
         }
       }
       if (count > 0) {
         const avgAcc = totalAcc / count;
-        initialPL = Math.min(0.3, avgAcc * 0.3);
+        initialPL = Math.min(transfer.cap, avgAcc * transfer.cap);
       }
     }
 
@@ -57,5 +61,5 @@ export function ensureCluster(clusters, id) {
 export function trackRecent(recentKeys, config, item) {
   const key = config.itemKey(item);
   recentKeys.push(key);
-  if (recentKeys.length > 5) recentKeys.shift();
+  if (recentKeys.length > CONSTANTS.history.MAX_RECENT) recentKeys.shift();
 }

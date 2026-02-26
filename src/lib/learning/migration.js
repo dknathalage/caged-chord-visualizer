@@ -9,13 +9,13 @@ export function migrateToUnified() {
   // Check if migration is needed
   const existing = localStorage.getItem(TARGET_KEY);
   if (existing) {
-    // Migrate v2 → v3: add theta if missing
     try {
       const data = JSON.parse(existing);
+      let changed = false;
+      // Migrate v2 → v3: add theta if missing
       if (data.v === 2) {
         data.v = 3;
         data.theta = 0.05;
-        // Estimate theta from existing mastery data
         if (data.items) {
           const items = Object.values(data.items);
           if (items.length > 0) {
@@ -23,13 +23,27 @@ export function migrateToUnified() {
             data.theta = Math.min(0.8, avgPL * 0.7 + 0.05);
           }
         }
-        localStorage.setItem(TARGET_KEY, JSON.stringify(data));
+        changed = true;
       }
+      // Migrate v3 → v4: add adaptive field
+      if (data.v === 3) {
+        migrateV3toV4(data);
+        changed = true;
+      }
+      if (changed) localStorage.setItem(TARGET_KEY, JSON.stringify(data));
     } catch { /* corrupt data, leave as-is */ }
     return;
   }
 
-  const merged = { v: 3, ts: Date.now(), qNum: 0, totalAttempts: 0, allCorrectTimes: [], items: {}, clusters: {}, recentKeys: [], theta: 0.05 };
+  const merged = {
+    v: 4, ts: Date.now(), qNum: 0, totalAttempts: 0, allCorrectTimes: [],
+    items: {}, clusters: {}, recentKeys: [], theta: 0.05,
+    adaptive: {
+      pG: null, pS: null, pT: null,
+      drillEffectiveness: { microDrill: { helped: 0, total: 0 }, confusionDrill: { helped: 0, total: 0 } },
+      featureErrorRates: {},
+    },
+  };
 
   for (const [exId, prefix] of Object.entries(TYPE_MAP)) {
     const raw = localStorage.getItem('gl_learn_' + exId);
@@ -61,4 +75,18 @@ export function migrateToUnified() {
     merged.theta = Math.min(0.8, avgPL * 0.7 + 0.05);
     localStorage.setItem(TARGET_KEY, JSON.stringify(merged));
   }
+}
+
+export function migrateV3toV4(data) {
+  data.v = 4;
+  data.adaptive = {
+    pG: null,
+    pS: null,
+    pT: null,
+    drillEffectiveness: {
+      microDrill: { helped: 0, total: 0 },
+      confusionDrill: { helped: 0, total: 0 },
+    },
+    featureErrorRates: {},
+  };
 }

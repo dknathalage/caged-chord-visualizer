@@ -1,4 +1,5 @@
 import { A4, NOTES } from '$lib/constants/music.js';
+import { DEFAULTS } from '../learning/defaults.js';
 
 export function semiToFreq(semi) {
   return A4 * Math.pow(2, semi / 12);
@@ -12,7 +13,10 @@ export function freqToNote(hz) {
   return {note: NOTES[idx], cents, semi: rounded};
 }
 
-export function yinDetect(buf, sampleRate) {
+export function yinDetect(buf, sampleRate, params) {
+  const yinThreshold = params?.audio?.yinThreshold ?? DEFAULTS.audio.yinThreshold;
+  const confidenceThreshold = params?.audio?.confidenceThreshold ?? DEFAULTS.audio.confidenceThreshold;
+
   const halfLen = Math.floor(buf.length / 2);
   const d = new Float32Array(halfLen);
   d[0] = 1;
@@ -27,10 +31,9 @@ export function yinDetect(buf, sampleRate) {
     runSum += sum;
     d[tau] = runSum === 0 ? 1 : d[tau] * tau / runSum;
   }
-  const threshold = 0.15;
   let tau = 2;
   while (tau < halfLen) {
-    if (d[tau] < threshold) {
+    if (d[tau] < yinThreshold) {
       while (tau + 1 < halfLen && d[tau + 1] < d[tau]) tau++;
       break;
     }
@@ -42,7 +45,7 @@ export function yinDetect(buf, sampleRate) {
   const s2 = tau + 1 < halfLen ? d[tau + 1] : d[tau];
   const betterTau = tau + (s0 - s2) / (2 * (s0 - 2 * s1 + s2));
   const confidence = 1 - d[tau];
-  if (confidence < 0.85) return null;
+  if (confidence < confidenceThreshold) return null;
   return sampleRate / betterTau;
 }
 

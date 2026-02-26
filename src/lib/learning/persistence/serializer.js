@@ -1,6 +1,17 @@
 import { clamp } from '../math-utils.js';
 
-const VERSION = 3;
+const VERSION = 4;
+
+const DEFAULT_ADAPTIVE = {
+  pG: null,
+  pS: null,
+  pT: null,
+  drillEffectiveness: {
+    microDrill: { helped: 0, total: 0 },
+    confusionDrill: { helped: 0, total: 0 },
+  },
+  featureErrorRates: {},
+};
 
 export function serialize(state) {
   const itemsObj = {};
@@ -29,6 +40,7 @@ export function serialize(state) {
     recentKeys: state.recentKeys,
     theta: state.theta,
     thetaHistory: state.thetaHistory,
+    adaptive: state.adaptive ?? DEFAULT_ADAPTIVE,
   });
 }
 
@@ -37,6 +49,12 @@ export function deserialize(raw) {
 
   if (data.v === 1) {
     return { version: 1, data };
+  }
+
+  if (data.v === 3) {
+    // v3 → v4: add default adaptive field
+    data.v = 4;
+    data.adaptive = DEFAULT_ADAPTIVE;
   }
 
   if (data.v !== VERSION) return null;
@@ -82,6 +100,7 @@ export function deserialize(raw) {
     thetaHistory: data.thetaHistory || [],
     items,
     clusters,
+    adaptive: data.adaptive ?? DEFAULT_ADAPTIVE,
   };
 }
 
@@ -128,5 +147,6 @@ export function migrateV1(data) {
     thetaHistory: [],
     items,
     clusters,
+    adaptive: DEFAULT_ADAPTIVE,
   };
 }

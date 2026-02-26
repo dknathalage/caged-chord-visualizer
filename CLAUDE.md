@@ -88,3 +88,10 @@ Algorithm documentation: `src/lib/learning/CLAUDE.md` and `README.md`
 - `{ base }` from `$app/paths` for all internal links
 - `AudioManager` class for mic lifecycle; `onDestroy` cleanup on navigation
 - Exercise configs are self-contained — all domain logic lives in the config, not the engine
+
+### Agent Coordination Rules
+
+- The **main agent** coordinates only — it must never read, write, or edit source code directly
+- All code work is delegated to teammate agents via the Task tool
+- Main agent responsibilities: task creation, assignment, review, and user communication
+- Teammate agents own specific files and must not modify files outside their scope

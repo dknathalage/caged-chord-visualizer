@@ -1,9 +1,16 @@
+import { DEFAULTS } from '../../learning/defaults.js';
+
 /**
  * Creates a hold detector for mic-based challenges.
  * Requires the player to sustain the correct note for confirmMs before confirming,
  * and sustain a wrong note for wrongMs before penalizing (with a cooldown).
  */
-export function createHoldDetector(confirmMs = 300, wrongMs = 600, cooldownMs = 2000) {
+export function createHoldDetector(params) {
+  const hd = params?.holdDetection ?? DEFAULTS.holdDetection;
+  const confirmMs = hd.confirmMs;
+  const wrongMs = hd.wrongMs;
+  const cooldownMs = hd.cooldownMs;
+
   let holdStart = 0;
   let wrongHold = 0;
   let wrongCd = 0;

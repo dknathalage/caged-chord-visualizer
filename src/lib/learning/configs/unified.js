@@ -6,6 +6,7 @@ import { chordPlayerConfig } from './chordPlayer.js';
 import { scaleRunnerConfig } from './scaleRunner.js';
 import { modeTrainerConfig } from './modeTrainer.js';
 import { chordTransitionConfig } from './chordTransition.js';
+import { DEFAULTS } from '../defaults.js';
 
 export const TYPES = [
   { id: 'nf', config: noteFindConfig,            name: 'Note Find' },
@@ -17,10 +18,6 @@ export const TYPES = [
   { id: 'mt', config: modeTrainerConfig,         name: 'Mode Trainer' },
   { id: 'cx', config: chordTransitionConfig,     name: 'Chord Transition' },
 ];
-
-// Recall constants
-const RECALL_PL_THRESHOLD = 0.7;
-const RECALL_DIFFICULTY_BOOST = 0.2;
 
 // Global difficulty ranges per type — overlapping for smooth transitions
 const TYPE_DIFFICULTY = {
@@ -40,7 +37,8 @@ function computeTypeWeights(engine) {
   const theta = engine?.theta ?? 0.05;
   const mastery = engine?.getMastery?.();
   const weights = {};
-  const window = 0.15;
+  const u = engine?.params?.unified ?? DEFAULTS.unified;
+  const window = u.thetaWindow;
   const lo = theta - window;
   const hi = theta + window;
 
@@ -63,11 +61,11 @@ function computeTypeWeights(engine) {
       const typeItems = mastery.items.filter(i => i.key.startsWith(t.id + ':'));
       if (typeItems.length > 0) {
         const typePL = typeItems.reduce((s, i) => s + i.pL, 0) / typeItems.length;
-        w *= (1 - typePL) * 0.5 + 0.5;
+        w *= (1 - typePL) * u.weaknessBoostScale + 0.5;
       }
     }
 
-    if (w > 0 && w < 0.05) w = 0.05;
+    if (w > 0 && w < u.minTypeWeight) w = u.minTypeWeight;
 
     weights[t.id] = w;
   }
@@ -100,7 +98,7 @@ export const unifiedConfig = {
     const td = TYPE_DIFFICULTY[item._type];
     const internalDiff = t.config.itemDifficulty(item._inner);
     let d = td.base + internalDiff * td.span;
-    if (item._recall) d = Math.min(1, d + RECALL_DIFFICULTY_BOOST);
+    if (item._recall) d = Math.min(1, d + DEFAULTS.unified.recallDifficultyBoost);
     return d;
   },
 
@@ -165,7 +163,7 @@ export const unifiedConfig = {
     // Check if recognition version has pL >= threshold
     const recogKey = item._type + ':' + typeById(item._type).config.itemKey(item._inner);
     const rec = engine.items.get(recogKey);
-    if (rec && rec.pL >= RECALL_PL_THRESHOLD && Math.random() < 0.5) {
+    if (rec && rec.pL >= DEFAULTS.unified.recallPLThreshold && Math.random() < 0.5) {
       return { ...item, _recall: true };
     }
     return item;

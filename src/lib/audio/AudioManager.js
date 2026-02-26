@@ -1,7 +1,9 @@
 import { yinDetect, rms, freqToNote } from './pitch.js';
+import { CONSTANTS } from '../learning/constants.js';
+import { DEFAULTS } from '../learning/defaults.js';
 
 export class AudioManager extends EventTarget {
-  constructor() {
+  constructor(params) {
     super();
     this.audioCtx = null;
     this.analyser = null;
@@ -9,6 +11,8 @@ export class AudioManager extends EventTarget {
     this.rafId = null;
     this.buffer = null;
     this.cachedSampleRate = null;
+    this._stableFrames = params?.audio?.stableFrames ?? DEFAULTS.audio.stableFrames;
+    this._rmsThreshold = params?.audio?.rmsThreshold ?? DEFAULTS.audio.rmsThreshold;
   }
 
   async start() {
@@ -20,7 +24,7 @@ export class AudioManager extends EventTarget {
       });
       const src = ctx.createMediaStreamSource(stream);
       const an = ctx.createAnalyser();
-      an.fftSize = 8192;
+      an.fftSize = CONSTANTS.audio.FFT_SIZE;
       src.connect(an);
       this.audioCtx = ctx;
       this.analyser = an;
@@ -51,18 +55,21 @@ export class AudioManager extends EventTarget {
   startLoop() {
     let prevNote = null;
     let stableCount = 0;
-    const STABLE_FRAMES = 3;
+    const STABLE_FRAMES = this._stableFrames;
+    const RMS_THRESHOLD = this._rmsThreshold;
+    const FREQ_MIN = CONSTANTS.audio.FREQ_MIN;
+    const FREQ_MAX = CONSTANTS.audio.FREQ_MAX;
     const loop = () => {
       if (!this.analyser) return;
       this.analyser.getFloatTimeDomainData(this.buffer);
-      if (rms(this.buffer) < 0.01) {
+      if (rms(this.buffer) < RMS_THRESHOLD) {
         prevNote = null; stableCount = 0;
         this.dispatchEvent(new CustomEvent('silence'));
         this.rafId = requestAnimationFrame(loop);
         return;
       }
       const hz = yinDetect(this.buffer, this.audioCtx.sampleRate);
-      if (!hz || hz < 50 || hz > 1400) {
+      if (!hz || hz < FREQ_MIN || hz > FREQ_MAX) {
         prevNote = null; stableCount = 0;
         this.dispatchEvent(new CustomEvent('silence'));
         this.rafId = requestAnimationFrame(loop);
